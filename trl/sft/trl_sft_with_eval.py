@@ -146,6 +146,7 @@ def main():
             #packing=True,   # use packing to reduce padding -> needs flash attention
             #use_liger_kernel=True,  # compatible with CP
             per_device_train_batch_size = config.per_device_train_batch_size,
+            per_device_eval_batch_size = config.per_device_eval_batch_size,
             # The activation_checkpointing in FSDP config and the gradient_checkpointing in training arg can't be set to True simultaneously
             gradient_checkpointing = False,
             gradient_accumulation_steps = config.gradient_accumulation_steps, # Use GA to mimic batch size

@@ -28,6 +28,7 @@ class TRLSFTHyps:
     eval_dataset_size: float = field(default=0.1)
 
     # Checkpointing and evaluation
+    per_device_eval_batch_size: int = field(default=4)
     logging_steps: int = field(default=100)
     eval_steps: int = field(default=100)
     save_steps: int = field(default=200)
