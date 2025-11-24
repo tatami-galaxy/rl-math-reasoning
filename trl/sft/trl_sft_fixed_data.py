@@ -10,12 +10,11 @@ from trl_sft_config import TRLSFTHyps
 
 from functools import partial
 
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     HfArgumentParser,
-    TrainingArguments,
 )
 from trl import SFTTrainer, SFTConfig
 
@@ -90,6 +89,7 @@ def main():
         print("Chat template found.")
 
     # load dataset
+    # TODO: check if dataset already processed
     dataset = load_dataset(config.sft_dataset, split=config.sft_dataset_split)
 
     # format dataset to chat template
@@ -107,34 +107,40 @@ def main():
 
     # truncate fine-tuning dataset to max_seq_len
     # seq_len: 16384 -> dataset: full (309066)
-    # seq_len: 8192 -> dataset: 
+    # seq_len: 8192 -> dataset: 255131 
     # seq_len: 4096 -> dataset: 137598
     # text already has chat template applied
-    print(dataset)
-    print('\n\n')
     dataset = dataset.filter(
         lambda x: len(tokenizer(x["text"])['input_ids']) <= config.max_seq_len
     )
-    print(dataset)
-    print(tokenizer(dataset['text'][0], return_tensors='pt')['input_ids'][0].shape)
-    # TODO : redo sft
-    quit()
 
     # split dataset into train and eval
     dataset = dataset.train_test_split(test_size=config.eval_dataset_size, seed=config.seed)
     train_dataset = dataset["train"]
     eval_dataset = dataset["test"]
 
-    # sample for testing
-    if config.sample and len(train_dataset) > config.num_samples:
-        train_dataset = train_dataset.select(range(config.num_samples))
-        eval_dataset = eval_dataset.select(range(int(config.num_samples * config.eval_dataset_size)))
+    # TODO : save sampled dataset to disk
+    dataset = DatasetDict({
+        "train": train_dataset,
+        "test": eval_dataset,
+    })
+    dataset_name = config.sft_dataset.split("/")[-1] + "_seq_" + str(config.max_seq_len) + "_samples_" + str(config.total_train_samples)
+    dataset.save_to_disk()
+
+    # sample train and eval samples
+    # datasets already shuffled
+    train_dataset = train_dataset.select(range(config.total_train_samples))
+    eval_dataset = eval_dataset.select(range(config.total_eval_samples))
+
+    print(train_dataset)
+    print(eval_dataset)
+    quit()
 
     # set output directory
     model_name = config.model_name.split("/")[-1]
     dataset_name = config.sft_dataset.split("/")[-1]
     seq_len = config.max_seq_len
-    checkpoint_folder = model_name + "_" + dataset_name + "_seq_" + str(seq_len)
+    checkpoint_folder = model_name + "_" + dataset_name + "_seq_" + str(seq_len) + "_samples_" + str(config.total_train_samples)
     output_dir = root+"/"+config.output_dir+"/"+checkpoint_folder
     
     # Train
