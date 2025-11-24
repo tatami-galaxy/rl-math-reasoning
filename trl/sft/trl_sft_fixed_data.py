@@ -115,6 +115,8 @@ def main():
         lambda x: len(tokenizer(x["text"])['input_ids']) <= config.max_seq_len
     )
     print(dataset)
+    print(tokenizer(dataset['text'][0], return_tensors='pt')['input_ids'][0].shape)
+    # TODO : redo sft
     quit()
 
     # split dataset into train and eval
