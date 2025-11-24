@@ -11,6 +11,7 @@ from trl_sft_config import TRLSFTHyps
 from functools import partial
 
 from datasets import load_dataset, DatasetDict
+from datasets.utils import FileNotFoundError
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -25,6 +26,72 @@ class NewSFTTrainer(SFTTrainer):
         trainer_state_path = os.path.join(self.args.output_dir, 'trainer_state.json')  
         self.state.save_to_json(trainer_state_path)  
 
+
+def load_sft_dataset(config):
+    if config.processed_dataset is None:
+        dataset = load_dataset(config.sft_dataset, split=config.sft_dataset_split)
+        return dataset
+    else:
+        try:
+            dataset = load_dataset(config.processed_dataset)
+            return dataset
+        except FileNotFoundError:
+            raise ValueError(f"❌ Dataset does not exist on HF.")
+    
+
+def process_sft_dataset(dataset, tokenizer, config):
+    # format dataset to chat template
+    # create 3 examples from each deepmath example
+    # with the 3 given reasoning traces
+    dataset = dataset.map(
+        partial(
+            format_dataset,
+            tokenizer=tokenizer,
+            add_think=config.add_think,
+        ),
+        batched = True,
+        remove_columns=dataset.column_names,
+    ).shuffle(config.seed)
+
+    # truncate fine-tuning dataset to max_seq_len
+    # seq_len: 16384 -> dataset: full (309066)
+    # seq_len: 8192 -> dataset: 255131 
+    # seq_len: 4096 -> dataset: 137598
+    # text already has chat template applied
+    # filter by trace length, not chat template
+    print(dataset)
+    dataset = dataset.filter(
+        lambda x: len(tokenizer(x["trace"])['input_ids']) <= config.max_seq_len
+    )
+    print(dataset)
+    quit()
+
+    # split dataset into train and eval
+    dataset = dataset.train_test_split(test_size=config.eval_dataset_size, seed=config.seed)
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["test"]
+
+    # save sampled dataset to disk
+    # only save trace, not template
+    dataset = DatasetDict({
+        "train": train_dataset,
+        "test": eval_dataset,
+    })
+    dataset_name = "_DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(seq_len)
+    dataset.save_to_disk()
+
+    # TODO : drop columns
+
+    # sample train and eval samples
+    # datasets already shuffled
+    train_dataset = train_dataset.select(range(config.total_train_samples))
+    eval_dataset = eval_dataset.select(range(config.total_eval_samples))
+
+    print(train_dataset)
+    print(eval_dataset)
+    quit()
+
+    return train_dataset, eval_dataset
 
 
 # format dataset for sft
@@ -44,6 +111,10 @@ def format_dataset(x, tokenizer, add_think=False):
     new_examples = {
         "text": [],
         "answer": [],
+        "question": [],
+        "trace": [],
+        "difficulty": [],
+        "topic": [],
     }
     # all 3 traces
     for i, question in enumerate(x["question"]):
@@ -52,6 +123,10 @@ def format_dataset(x, tokenizer, add_think=False):
         for trace in traces:
             new_examples["text"].append(process_trace(question, trace, add_think))
             new_examples["answer"].append(answer)
+            new_examples["question"].append(question)
+            new_examples["trace"].append(trace)
+            new_examples["difficulty"].append(x["difficulty"][i])
+            new_examples["topic"].append(x["topic"][i])
 
     return new_examples
 
@@ -89,61 +164,23 @@ def main():
         print("Chat template found.")
 
     # load dataset
-    # TODO: check if dataset already processed
-    dataset = load_dataset(config.sft_dataset, split=config.sft_dataset_split)
+    dataset = load_sft_dataset(config)
 
-    # format dataset to chat template
-    # create 3 examples from each deepmath example
-    # with the 3 given reasoning traces
-    dataset = dataset.map(
-        partial(
-            format_dataset,
-            tokenizer=tokenizer,
-            add_think=config.add_think,
-        ),
-        batched = True,
-        remove_columns=dataset.column_names,
-    ).shuffle(config.seed)
-
-    # truncate fine-tuning dataset to max_seq_len
-    # seq_len: 16384 -> dataset: full (309066)
-    # seq_len: 8192 -> dataset: 255131 
-    # seq_len: 4096 -> dataset: 137598
-    # text already has chat template applied
-    dataset = dataset.filter(
-        lambda x: len(tokenizer(x["text"])['input_ids']) <= config.max_seq_len
-    )
-
-    # split dataset into train and eval
-    dataset = dataset.train_test_split(test_size=config.eval_dataset_size, seed=config.seed)
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["test"]
-
-    # TODO : save sampled dataset to disk
-    dataset = DatasetDict({
-        "train": train_dataset,
-        "test": eval_dataset,
-    })
-    dataset_name = config.sft_dataset.split("/")[-1] + "_seq_" + str(config.max_seq_len) + "_samples_" + str(config.total_train_samples)
-    dataset.save_to_disk()
-
-    # sample train and eval samples
-    # datasets already shuffled
-    train_dataset = train_dataset.select(range(config.total_train_samples))
-    eval_dataset = eval_dataset.select(range(config.total_eval_samples))
-
-    print(train_dataset)
-    print(eval_dataset)
-    quit()
+    # process dataset if needed
+    if config.processed_dataset is None:
+        train_dataset, eval_dataset = process_sft_dataset(dataset, tokenizer, config)
 
     # set output directory
     model_name = config.model_name.split("/")[-1]
-    dataset_name = config.sft_dataset.split("/")[-1]
     seq_len = config.max_seq_len
-    checkpoint_folder = model_name + "_" + dataset_name + "_seq_" + str(seq_len) + "_samples_" + str(config.total_train_samples)
+    if config.processed_dataset is None:
+        dataset_name = "_DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(seq_len)
+    else: 
+        dataset_name = config.processed_dataset.split("/")[-1]
+    checkpoint_folder = model_name + dataset_name
     output_dir = root+"/"+config.output_dir+"/"+checkpoint_folder
     
-    # Train
+    # train
     trainer = NewSFTTrainer(
         model = model,
         processing_class = tokenizer,
