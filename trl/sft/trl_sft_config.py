@@ -12,6 +12,7 @@ class TRLSFTHyps:
     add_think: bool = field(default=False)
     sample: bool = field(default=False)
     num_samples: int = field(default=512)
+    total_samples: int = field(default=1600)
 
     # Model parameters
     model_name: str = field(default=None)
