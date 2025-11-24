@@ -109,7 +109,11 @@ def main():
     # seq_len: 16384 -> dataset: 200387 
     # seq_len: 8192 -> dataset: 62255
     # seq_len: 4096 -> dataset: 1877
-    dataset = dataset.filter(lambda x: len(x["text"]) <= config.max_seq_len)
+    # text already has chat template applied
+    print(dataset)
+    dataset = dataset.filter(
+        lambda x: len(tokenizer(x["text"])['input_ids']) <= config.max_seq_len
+    )
     print(dataset)
     quit()
 

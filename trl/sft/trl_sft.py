@@ -108,6 +108,8 @@ def main():
     # seq_len: 16384 -> dataset: 200387 
     # seq_len: 8192 -> dataset: 62255
     # seq_len: 4096 -> dataset: 1877
+    # TODO :
+    raise ValueError("Fix seqlen filtering logic")
     dataset = dataset.filter(lambda x: len(x["text"]) <= config.max_seq_len)
 
     # sample for testing
