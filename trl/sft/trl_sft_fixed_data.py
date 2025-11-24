@@ -106,11 +106,12 @@ def main():
     ).shuffle(config.seed)
 
     # truncate fine-tuning dataset to max_seq_len
-    # seq_len: 16384 -> dataset: 200387 
-    # seq_len: 8192 -> dataset: 62255
-    # seq_len: 4096 -> dataset: 1877
+    # seq_len: 16384 -> dataset: full (309066)
+    # seq_len: 8192 -> dataset: 
+    # seq_len: 4096 -> dataset: 137598
     # text already has chat template applied
     print(dataset)
+    print('\n\n')
     dataset = dataset.filter(
         lambda x: len(tokenizer(x["text"])['input_ids']) <= config.max_seq_len
     )
