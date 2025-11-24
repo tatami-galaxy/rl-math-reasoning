@@ -56,6 +56,7 @@ def main():
     ).shuffle(config.seed)
 
     # filter by trace length, not chat template
+    # TODO : min length?
     dataset = dataset.filter(
         lambda x: len(tokenizer(x["trace"])['input_ids']) <= config.max_seq_len
     )
@@ -71,7 +72,7 @@ def main():
         "train": train_dataset,
         "test": eval_dataset,
     })
-    dataset_name = "_DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(config.max_seq_len)
+    dataset_name = "DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(config.max_seq_len)
     dataset.push_to_hub("Ujan/"+dataset_name)
 
 
