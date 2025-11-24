@@ -47,9 +47,6 @@ def main():
     # load dataset
     dataset = load_dataset(config.sft_dataset, split=config.sft_dataset_split)
 
-    print(dataset)
-    print('\n\n')
-
     # create 3 examples from each deepmath example
     # with the 3 given reasoning traces
     dataset = dataset.map(
@@ -58,19 +55,13 @@ def main():
         remove_columns=dataset.column_names,
     ).shuffle(config.seed)
 
-    print(dataset)
-    print('\n\n')
-
     # filter by trace length, not chat template
     dataset = dataset.filter(
         lambda x: len(tokenizer(x["trace"])['input_ids']) <= config.max_seq_len
     )
 
-    print(dataset)
-    print('\n\n')
-
     # split dataset into train and eval
-    dataset = dataset.train_test_split(test_size=config.eval_dataset_size, seed=config.seed)
+    dataset = dataset.train_test_split(test_size=config.total_eval_samples, seed=config.seed)
     train_dataset = dataset["train"]
     train_dataset = train_dataset.select(range(config.total_train_samples))
     eval_dataset = dataset["test"]
@@ -80,9 +71,6 @@ def main():
         "train": train_dataset,
         "test": eval_dataset,
     })
-    print(dataset)
-    print('\n\n')
-    quit()
     dataset_name = "_DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(config.max_seq_len)
     dataset.push_to_hub("Ujan/"+dataset_name)
 

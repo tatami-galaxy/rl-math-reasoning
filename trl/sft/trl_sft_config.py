@@ -29,7 +29,6 @@ class TRLSFTHyps:
     # For cp_size=4: use pad_to_multiple_of=8 (since cp_size * 2 = 8)
     pad_to_multiple_of: int = field(default=4)
     num_train_epochs: int = field(default=1)
-    eval_dataset_size: float = field(default=0.1)
 
     # Checkpointing and evaluation
     per_device_eval_batch_size: int = field(default=4)
