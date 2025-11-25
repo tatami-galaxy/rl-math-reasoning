@@ -35,7 +35,7 @@ class TRLSFTHyps:
     logging_steps: int = field(default=50)
     eval_steps: int = field(default=100)
     save_steps: int = field(default=100)
-    save_total_limit: int = field(default=3)
+    save_total_limit: int = field(default=2)
     resume_from_checkpoint: bool = field(default=False)
 
     # Optimizer parameters

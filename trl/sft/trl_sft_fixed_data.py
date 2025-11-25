@@ -102,7 +102,7 @@ def main():
     # set output directory
     model_name = config.model_name.split("/")[-1]
     dataset_name = config.processed_dataset.split("/")[-1]
-    checkpoint_folder = model_name + dataset_name
+    checkpoint_folder = model_name + '_' + dataset_name + '_epoch_' + str(config.num_train_epochs)
     output_dir = root+"/"+config.output_dir+"/"+checkpoint_folder
     
     # train
