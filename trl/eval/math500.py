@@ -3,7 +3,6 @@ import random
 import sys
 sys.path.append('../')
 from trl_utils import SYSTEM_PROMPT
-from trl_utils import create_chat_template
 
 from math_verify import parse, verify
 from tqdm.auto import tqdm
