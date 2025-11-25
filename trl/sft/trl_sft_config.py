@@ -32,9 +32,9 @@ class TRLSFTHyps:
 
     # Checkpointing and evaluation
     per_device_eval_batch_size: int = field(default=4)
-    logging_steps: int = field(default=100)
+    logging_steps: int = field(default=50)
     eval_steps: int = field(default=100)
-    save_steps: int = field(default=200)
+    save_steps: int = field(default=100)
     save_total_limit: int = field(default=3)
     resume_from_checkpoint: bool = field(default=False)
 

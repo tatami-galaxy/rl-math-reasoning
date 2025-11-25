@@ -1,5 +1,3 @@
-# TODO : same data size
-
 import os
 import sys
 sys.path.append("..")
@@ -10,8 +8,7 @@ from trl_sft_config import TRLSFTHyps
 
 from functools import partial
 
-from datasets import load_dataset, DatasetDict
-from datasets.utils import FileNotFoundError
+from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -27,108 +24,34 @@ class NewSFTTrainer(SFTTrainer):
         self.state.save_to_json(trainer_state_path)  
 
 
-def load_sft_dataset(config):
-    if config.processed_dataset is None:
-        dataset = load_dataset(config.sft_dataset, split=config.sft_dataset_split)
-        return dataset
-    else:
-        try:
-            dataset = load_dataset(config.processed_dataset)
-            return dataset
-        except FileNotFoundError:
-            raise ValueError(f"❌ Dataset does not exist on HF.")
-    
+# format dataset for sft
+def format_dataset(x, tokenizer, add_think=False):
+
+    think_token = REASONING_START if add_think else ''
+    messages =  [
+        {"role" : "system",    "content" : SYSTEM_PROMPT},
+        # add <think> token after question
+        {"role" : "user",      "content" : x['question']+think_token},
+        {"role" : "assistant", "content" : x['trace']},
+    ]
+    # no generation_prompt because this is sft, needed for rl
+    x['text'] = tokenizer.apply_chat_template(messages, tokenize=False) 
+
+    return x
+
 
 def process_sft_dataset(dataset, tokenizer, config):
-    # format dataset to chat template
-    # create 3 examples from each deepmath example
-    # with the 3 given reasoning traces
     dataset = dataset.map(
         partial(
             format_dataset,
             tokenizer=tokenizer,
             add_think=config.add_think,
         ),
-        batched = True,
+        batched=False,
         remove_columns=dataset.column_names,
     ).shuffle(config.seed)
 
-    # truncate fine-tuning dataset to max_seq_len
-    # seq_len: 16384 -> dataset: full (309066)
-    # seq_len: 8192 -> dataset: 255131 
-    # seq_len: 4096 -> dataset: 137598
-    # text already has chat template applied
-    # filter by trace length, not chat template
-    print(dataset)
-    dataset = dataset.filter(
-        lambda x: len(tokenizer(x["trace"])['input_ids']) <= config.max_seq_len
-    )
-    print(dataset)
-    quit()
-
-    # split dataset into train and eval
-    dataset = dataset.train_test_split(test_size=config.eval_dataset_size, seed=config.seed)
-    train_dataset = dataset["train"]
-    eval_dataset = dataset["test"]
-
-    # save sampled dataset to disk
-    # only save trace, not template
-    dataset = DatasetDict({
-        "train": train_dataset,
-        "test": eval_dataset,
-    })
-    dataset_name = "_DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(seq_len)
-    dataset.save_to_disk()
-
-    # TODO : drop columns
-
-    # sample train and eval samples
-    # datasets already shuffled
-    train_dataset = train_dataset.select(range(config.total_train_samples))
-    eval_dataset = eval_dataset.select(range(config.total_eval_samples))
-
-    print(train_dataset)
-    print(eval_dataset)
-    quit()
-
-    return train_dataset, eval_dataset
-
-
-# format dataset for sft
-def format_dataset(x, tokenizer, add_think=False):
-
-    def process_trace(q, trace, add_think):
-        think_token = REASONING_START if add_think else ''
-        messages =  [
-            {"role" : "system",    "content" : SYSTEM_PROMPT},
-            # add <think> token after question
-            {"role" : "user",      "content" : q+think_token},
-            {"role" : "assistant", "content" : trace},
-        ]
-        # no generation_prompt because this is sft, needed for rl
-        return tokenizer.apply_chat_template(messages, tokenize=False) 
-
-    new_examples = {
-        "text": [],
-        "answer": [],
-        "question": [],
-        "trace": [],
-        "difficulty": [],
-        "topic": [],
-    }
-    # all 3 traces
-    for i, question in enumerate(x["question"]):
-        answer = x["final_answer"][i]
-        traces = [x["r1_solution_1"][i], x["r1_solution_2"][i], x["r1_solution_3"][i]]
-        for trace in traces:
-            new_examples["text"].append(process_trace(question, trace, add_think))
-            new_examples["answer"].append(answer)
-            new_examples["question"].append(question)
-            new_examples["trace"].append(trace)
-            new_examples["difficulty"].append(x["difficulty"][i])
-            new_examples["topic"].append(x["topic"][i])
-
-    return new_examples
+    return dataset
 
 
 def main():
@@ -142,6 +65,10 @@ def main():
         raise ValueError("model name must be specified.")
     if config.max_seq_len is None:
         raise ValueError("max sequence length must be specified.")
+    if config.processed_dataset is None:
+        raise ValueError("processed dataset must be specified.")
+    if config.processed_dataset.split('_')[-1] != str(config.max_seq_len):
+        raise ValueError("seq len mismatch")
 
     print("cp size set to {}. Modify accelerate config and sft config to change".format(config.pad_to_multiple_of//2))
 
@@ -164,19 +91,17 @@ def main():
         print("Chat template found.")
 
     # load dataset
-    dataset = load_sft_dataset(config)
+    dataset = load_dataset(config.processed_dataset) 
+    train_dataset = dataset["train"]
+    eval_dataset = dataset["test"]
 
-    # process dataset if needed
-    if config.processed_dataset is None:
-        train_dataset, eval_dataset = process_sft_dataset(dataset, tokenizer, config)
+    # process dataset
+    train_dataset = process_sft_dataset(train_dataset, tokenizer, config)
+    eval_dataset = process_sft_dataset(eval_dataset, tokenizer, config)
 
     # set output directory
     model_name = config.model_name.split("/")[-1]
-    seq_len = config.max_seq_len
-    if config.processed_dataset is None:
-        dataset_name = "_DeepMath-103K_samples_"+str(config.total_train_samples)+ "_seq_"+str(seq_len)
-    else: 
-        dataset_name = config.processed_dataset.split("/")[-1]
+    dataset_name = config.processed_dataset.split("/")[-1]
     checkpoint_folder = model_name + dataset_name
     output_dir = root+"/"+config.output_dir+"/"+checkpoint_folder
     
