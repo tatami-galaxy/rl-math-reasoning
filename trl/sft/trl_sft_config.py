@@ -11,6 +11,7 @@ class TRLSFTHyps:
     sft_dataset: str = field(default="zwhe99/DeepMath-103K")
     sft_dataset_split: str = field(default="train")
     processed_dataset: str = field(default=None)
+    pruned: bool = field(default=False)
     add_think: bool = field(default=False)
     total_train_samples: int = field(default=10000)
     total_eval_samples: int = field(default=1000)

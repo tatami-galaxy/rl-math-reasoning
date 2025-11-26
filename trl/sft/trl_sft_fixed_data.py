@@ -1,6 +1,6 @@
 import os
 import sys
-sys.path.append("..")
+sys.path.append("../../")
 from trl_sft_config import TRLSFTHyps
 from utils import process_sft_dataset
 from utils import get_root_dir, create_chat_template
@@ -35,8 +35,8 @@ def main():
         raise ValueError("max sequence length must be specified.")
     if config.processed_dataset is None:
         raise ValueError("processed dataset must be specified.")
-    if config.processed_dataset.split('_')[-1] != str(config.max_seq_len):
-        raise ValueError("seq len mismatch")
+    #if config.processed_dataset.split('_')[-1] != str(config.max_seq_len):
+        #raise ValueError("seq len mismatch")
 
     print("cp size set to {}. Modify accelerate config and sft config to change".format(config.pad_to_multiple_of//2))
 
@@ -64,8 +64,9 @@ def main():
     eval_dataset = dataset["test"]
 
     # process dataset
-    train_dataset = process_sft_dataset(train_dataset, tokenizer, config)
-    eval_dataset = process_sft_dataset(eval_dataset, tokenizer, config)
+    if not config.pruned:        
+        train_dataset = process_sft_dataset(train_dataset, tokenizer, config)
+        eval_dataset = process_sft_dataset(eval_dataset, tokenizer, config)
 
     # set output directory
     model_name = config.model_name.split("/")[-1]
