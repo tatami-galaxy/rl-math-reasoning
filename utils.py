@@ -1,5 +1,6 @@
 import os
 from os.path import dirname
+from functools import partial
 
 
 SYSTEM_PROMPT = "You are given a math problem. Please reason step by step, and put your final answer within \\boxed{}."
@@ -37,8 +38,37 @@ def create_chat_template(tokenizer):
         "{% endif %}"
     
     chat_template = chat_template.replace("'{system_prompt}'", f"'{SYSTEM_PROMPT}'")
-    chat_template = chat_template.replace("'{reasoning_start}'", f"'{REASONING_START}'")
-    
+    chat_template = chat_template.replace("'{reasoning_start}'", f"'{REASONING_START}'")    
     tokenizer.chat_template = chat_template
 
     return tokenizer
+
+
+# format dataset for sft
+def format_dataset(x, tokenizer, add_think=False):
+
+    think_token = REASONING_START if add_think else ''
+    messages =  [
+        {"role" : "system",    "content" : SYSTEM_PROMPT},
+        # add <think> token after question
+        {"role" : "user",      "content" : x['question']+think_token},
+        {"role" : "assistant", "content" : x['trace']},
+    ]
+    # no generation_prompt because this is sft, needed for rl
+    x['text'] = tokenizer.apply_chat_template(messages, tokenize=False) 
+
+    return x
+
+
+def process_sft_dataset(dataset, tokenizer, config):
+    dataset = dataset.map(
+        partial(
+            format_dataset,
+            tokenizer=tokenizer,
+            add_think=config.add_think,
+        ),
+        batched=False,
+        remove_columns=dataset.column_names,
+    ).shuffle(config.seed)
+
+    return dataset

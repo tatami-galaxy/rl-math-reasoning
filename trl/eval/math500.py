@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import random
 import sys
 sys.path.append('../')
-from trl_utils import SYSTEM_PROMPT
+from utils import SYSTEM_PROMPT
 
 from math_verify import parse, verify
 from tqdm.auto import tqdm
