@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 import random
 import sys
-sys.path.append('../')
+sys.path.append('../../')
 from utils import SYSTEM_PROMPT
 
 from math_verify import parse, verify
