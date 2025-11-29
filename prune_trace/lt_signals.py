@@ -261,7 +261,7 @@ class LTSignals:
     
 
     def prune_segments(self, batch_sorted_cos_indices, batch_segments):
-        pruned_segments = []
+        batch_pruned_segments = []
         # iterate over batch
         for b in range(len(batch_sorted_cos_indices)):
             sorted_cos_ind = batch_sorted_cos_indices[b]
@@ -269,26 +269,47 @@ class LTSignals:
             
             # get number of segments to keep
             num_keep_segments = round(sorted_cos_ind.shape[0] * self.sparsity)
-
             # get indices of segments to keep and sort them
             # the first num_keep_segment indices are to be kept (sorted in descending order)
             keep_indices, _ = torch.sort(sorted_cos_ind[:num_keep_segments])
 
-            print(sorted_cos_ind)
-            print(keep_indices)
-            quit()
+            # select segments to keep, make sure segment ends in \n\n, else keep adding from next segment
+            keep_segments = []
+            burned_indices = []
+            for k in keep_indices:
+                # segment already added
+                if k in burned_indices: continue
+                burned_indices.append(k)
+                # get segment
+                k_segment = segments[k]
+                # first add this segment
+                keep_segments.append(k_segment)
+                # segment ends with line break or its the last segment
+                if k_segment.endswith('\n\n') or k == len(segments)-1: continue
+                # segment ends in the middle of a sentence, find the end from the next segments
+                else:
+                    index = k+1
+                    # get next segment
+                    next_segment = segments[index]
+                    # if no line break in next segment, add it and go to next segment
+                    while '\n\n' not in next_segment and index < len(segments)-1:
+                        keep_segments.append(next_segment)
+                        burned_indices.append(index)
+                        index += 1
+                        next_segment = segments[index]
+                    # check if we reached last segment
+                    if index == len(segments)-1:
+                        keep_segments.append(next_segment)
+                    # else there is a line break in next segment
+                    # we extract upto line break and keep the rest as the next segment
+                    else:
+                        first_part = next_segment.split('\n\n')[0]
+                        keep_segments.append(first_part)
+                        segments[index] = '\n\n'.join(next_segment.split('\n\n')[1:])
+                        burned_indices.append(index)
 
-            # TODO : select segments to keep, make sure segment ends in \n\n, else keep addind from next segment
-            keep_segments = [segments[k] for k in keep_indices]
-
-            # add back first segment
-            keep_segments = [batch_segment_texts[b][0]] + keep_segments
-            # add first index and increase remaining indices by 1
-            sorted_cos_ind = torch.cat((torch.tensor([0]).to(sorted_cos_ind.device), sorted_cos_ind+1))
-            batch_sorted_cos_ind.append(sorted_cos_ind)
-            batch_keep_segments.append(keep_segments)
-
-        return batch_sorted_cos_ind, batch_keep_segments
+            batch_pruned_segments.append(keep_segments)
+        return batch_pruned_segments
     
 
     def prune_dataset(self, dataloader):
@@ -329,7 +350,7 @@ class LTSignals:
             batch_pruned_segments = self.prune_segments(batch_sorted_cos_indices, batch_segment_texts)
 
             # join segments
-            batch_pruned_segments = ['\n\n'.join(segments) for segments in batch_pruned_segments]
+            batch_pruned_segments = [''.join(segments) for segments in batch_pruned_segments]
 
             # create examples using pruned trace
             # add pruned trace between intro and outro

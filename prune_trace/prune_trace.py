@@ -89,7 +89,7 @@ if __name__ == "__main__":
         raise ValueError("Spceify dataset")
     if model_args.overlap_segments:
         raise NotImplementedError(
-            "Not supported curently for pruning. Need to map to non overlapping segments before pruning"
+            "Not supported curently for pruning."
         )
     
     # generate pruned dataset
