@@ -31,10 +31,10 @@ class ModelArguments:
 
     model_name: str = field(default="Qwen/Qwen3-4B-Thinking-2507")
     batch_size: int = field(default=4)
-    segment_length: int = field(default=256)
+    segment_length: int = field(default=128)
     overlap_segments: bool = field(default=False)
     preserve_last_segment: bool = field(default=False) # first segment always preserved
-    stride: int = field(default=64)
+    stride: int = field(default=32)
     layers: str = field(default="all")
     sparsity: float = field(default=0.5)
     pruning_logic: str = field(default='algn')

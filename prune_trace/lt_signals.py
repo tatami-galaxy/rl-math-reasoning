@@ -230,7 +230,7 @@ class LTSignals:
         return cos_sim_all_layers, algn_change
     
 
-    def get_segments_by_algn(self, batch_cos_sim_all_layers, batch_segment_texts):
+    def sort_segments_by_algn(self, batch_cos_sim_all_layers):
         # get batch size
         current_batch_size = len(batch_cos_sim_all_layers)
 
@@ -244,26 +244,41 @@ class LTSignals:
             ] 
 
         # sort segments by layer-averaged cos sim
-        batch_keep_segments = []
         batch_sorted_cos_ind = []
 
         # iterate over batch
         for b in range(current_batch_size):
             # ignore first segment
-            segments = batch_segment_texts[b][1:]
             cos_sim_layer_avg = batch_cos_sim_layer_avg[b][1:]
 
-            # sort by cos values
-            sorted_cos, sorted_cos_ind = torch.sort(cos_sim_layer_avg)
+            # sort by cos values in descending order
+            sorted_cos, sorted_cos_ind = torch.sort(cos_sim_layer_avg, descending=True)
+            sorted_cos_ind = torch.cat((torch.tensor([0]).to(sorted_cos_ind.device), sorted_cos_ind+1))
+            batch_sorted_cos_ind.append(sorted_cos_ind)
 
+        return batch_sorted_cos_ind
+            
+    
+
+    def prune_segments(self, batch_sorted_cos_indices, batch_segments):
+        pruned_segments = []
+        # iterate over batch
+        for b in range(len(batch_sorted_cos_indices)):
+            sorted_cos_ind = batch_sorted_cos_indices[b]
+            segments = batch_segments[b]
+            
             # get number of segments to keep
-            num_keep_segments = round(sorted_cos.shape[0] * self.sparsity)
+            num_keep_segments = round(sorted_cos_ind.shape[0] * self.sparsity)
 
             # get indices of segments to keep and sort them
-            # the first num_keep_segment indices are to be removed
-            keep_indices, _ = torch.sort(sorted_cos_ind[num_keep_segments:])
+            # the first num_keep_segment indices are to be kept (sorted in descending order)
+            keep_indices, _ = torch.sort(sorted_cos_ind[:num_keep_segments])
 
-            # select segments to keep
+            print(sorted_cos_ind)
+            print(keep_indices)
+            quit()
+
+            # TODO : select segments to keep, make sure segment ends in \n\n, else keep addind from next segment
             keep_segments = [segments[k] for k in keep_indices]
 
             # add back first segment
@@ -306,12 +321,12 @@ class LTSignals:
             )
 
             if self.pruning_logic == 'algn':
-                batch_sorted_cos_indices, batch_pruned_segments = self.get_segments_by_algn(
-                    batch_cos_sim_all_layers,
-                    batch_segment_texts,
-                )
+                batch_sorted_cos_indices = self.sort_segments_by_algn(batch_cos_sim_all_layers)
             else:
                 raise NotImplementedError()
+            
+            # prune segments with semantics
+            batch_pruned_segments = self.prune_segments(batch_sorted_cos_indices, batch_segment_texts)
 
             # join segments
             batch_pruned_segments = ['\n\n'.join(segments) for segments in batch_pruned_segments]
