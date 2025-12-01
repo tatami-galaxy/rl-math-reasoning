@@ -98,6 +98,6 @@ if __name__ == "__main__":
     # save pruned dataset
     model_name = model_args.model_name.split('/')[-1]
     layers = 'all' if model_args.layers == 'all' else '_'.join(model_args.layers.split(','))
-    dataset_name = 'lts_'+data_args.dataset_name.split('/')[-1]+'_'+model_name+layers+str(model_args.sparsity)
+    dataset_name = 'lts_'+data_args.dataset_name.split('/')[-1]+'_'+model_name+'_'+layers+'_'+str(model_args.sparsity)
     pruned_dataset.push_to_hub('Ujan/'+dataset_name)
     print('Done.')
