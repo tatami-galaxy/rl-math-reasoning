@@ -241,7 +241,7 @@ class LTSignals:
             layers = [int(l) for l in self.layers.split(',')]
             batch_cos_sim_layer_avg = [
                     torch.mean(cos_sim[:,layers], dim=1) for cos_sim in batch_cos_sim_all_layers
-            ] 
+            ]
 
         # sort segments by layer-averaged cos sim
         batch_sorted_cos_ind = []
