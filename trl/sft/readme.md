@@ -1,3 +1,5 @@
+python trl_sft_gen_fixed_data.py --model_name Qwen/Qwen3-4B-Base --max_seq_len 2048
+
 CUDA_VISIBLE_DEVICES=0,1 accelerate launch --config_file /home/ujan/.cache/huggingface/accelerate/cp_2_config.yaml trl_sft_fixed_data.py --model_name Qwen/Qwen3-4B-Base --model_revision 906bfd4b4dc7f14ee4320094d8b41684abff8539 --processed_dataset Ujan/DeepMath-103K_samples_50000_seq_8192 --max_seq_len 8192 --per_device_train_batch_size 4 --gradient_accumulation_steps 8 --pad_to_multiple_of 4
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --config_file /home/ujan/.cache/huggingface/accelerate/cp_2_config.yaml trl_sft_fixed_data.py --model_name Qwen/Qwen3-4B-Base --model_revision 906bfd4b4dc7f14ee4320094d8b41684abff8539 --processed_dataset Ujan/lts_pruned_processed_DeepMath-103K_samples_10000_seq_16384_Qwen3-4B-Thinking-2507_sparsity_0.5 --max_seq_len 16384 --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --gradient_accumulation_steps 16 --pad_to_multiple_of 8 --pruned
