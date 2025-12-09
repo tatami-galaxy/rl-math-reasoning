@@ -23,6 +23,7 @@ class TRLSFTHyps:
     model_revision: str = field(default="main")
 
     # Training parameters
+    # 2k -> 30k samples
     max_seq_len: int = field(default=None)  # 4096, 8192, 16384
     per_device_train_batch_size: int = field(default=8)
     gradient_accumulation_steps: int = field(default=4)
