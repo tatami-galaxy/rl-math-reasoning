@@ -1,10 +1,12 @@
+import sys
+sys.path.append('../../')
 import os
 from os.path import dirname
 import chz
 import numpy as np
 
-from experiments.rl.rl_config import RLHyps
-from template import SYSTEM_PROMPT, create_chat_template
+from rl_config import RLHyps
+from utils import SYSTEM_PROMPT, create_chat_template
 
 from math_verify import parse, verify
 from datasets import load_dataset
@@ -209,10 +211,6 @@ def main(config: RLHyps):
 
     # Train!
     trainer.train()
-
-
-
-
 
 
 if __name__ == "__main__":
