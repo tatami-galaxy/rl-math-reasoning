@@ -54,6 +54,11 @@ def format_dataset(x, tokenizer, add_think=False):
         {"role" : "user",      "content" : x['question']+think_token},
         {"role" : "assistant", "content" : x['trace']},
     ]
+    # standard language modeling : 
+    # {"text": "The sky is blue."}
+    # conversational language modeling : 
+    # {"messages": [{"role": "user", "content": "What color is the sky?"}, {"role": "assistant", "content": "It is blue."}]}
+    # when provided with a conversational dataset, the trainer will automatically apply the chat template to the datasetx
     # no generation_prompt because this is sft, needed for rl
     x['text'] = tokenizer.apply_chat_template(messages, tokenize=False) 
 
