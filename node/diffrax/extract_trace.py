@@ -1,29 +1,50 @@
-import torch
-import numpy as np
-import h5py
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from datasets import load_dataset
+import sys
+sys.path.append('../../')
 from typing import List, Dict, Tuple, Optional
 import json
 import os
 from tqdm import tqdm
 import re
+import numpy as np
+import h5py
+import torch
+
+from transformers import(
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    HfArgumentParser,
+)
+from datasets import load_dataset
+
+from extract_trace_config import ExtractTraceConfig
+from utils import SYSTEM_PROMPT, REASONING_START, REASONING_END
 
 
 class ThinkingTraceExtractor:
-    def __init__(self, model_name: str = "Qwen/Qwen2.5-3B-Instruct"):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model_name = model_name
-        self.tokenizer = None
+    def __init__(self, config):
         self.model = None
-        self.thinking_start_token = "<think>"
-        self.thinking_end_token = "</think>"
+        self.tokenizer = None
+        self.max_new_tokens = config.max_new_tokens
 
-    def load_model(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+
+    def format_prompt(self, question):
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": "Problem : {}".format(question)},
+        ]
+        text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return text
+
+
+    def load_model(self, config):
+        self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_name,
-            torch_dtype=torch.float16,
+            config.model_name,
+            dtype=config.model_dtype,
             device_map="auto",
             output_hidden_states=True,
             return_dict_in_generate=True
@@ -31,28 +52,35 @@ class ThinkingTraceExtractor:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    def load_dataset(self, dataset_name: str = "hamishivi/polaris_53k", split: str = "train"):
-        dataset = load_dataset(dataset_name, split=split)
-        return dataset
 
-    def extract_thinking_trace_tokens(self, generated_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def load_dataset(self, config):
+        self.dataset = load_dataset(config.dataset_name, split=config.data_split)
+        if config.sample:
+            self.dataset = self.dataset.select(range(config.num_samples))
+
+
+    def extract_thinking_trace_tokens(self, generated_ids):
         generated_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=False)
 
-        start_pattern = r'<think>\s*\n'
-        end_pattern = r'\s*\n</think>'
+        start_pattern = r'{}\s*\n'.format(REASONING_START)
+        end_pattern = r'\s*\n{}'.format(REASONING_END)
 
+        # find think start and end positions in text
         start_match = re.search(start_pattern, generated_text)
         end_match = re.search(end_pattern, generated_text)
 
         if start_match and end_match:
+            # find think start and end positions in text
             thinking_start_pos = start_match.end()
             thinking_end_pos = end_match.start()
 
+            # get thinking text
             thinking_text = generated_text[thinking_start_pos:thinking_end_pos]
-
+            # get tokens corresponding to thinking text and convert to tensor
             thinking_tokens = self.tokenizer.encode(thinking_text, add_special_tokens=False)
-            thinking_tensor = torch.tensor(thinking_tokens, device=self.device).unsqueeze(0)
+            thinking_tensor = torch.tensor(thinking_tokens, device=self.model.device).unsqueeze(0)
 
+            # find start and end token position for thinking trace
             start_idx_in_generated = len(self.tokenizer.encode(
                 generated_text[:thinking_start_pos], add_special_tokens=False
             ))
@@ -62,28 +90,32 @@ class ThinkingTraceExtractor:
 
         return None, None
 
-    def generate_with_hidden_states(self, prompt: str, max_new_tokens: int = 512) -> Dict:
-        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True).to(self.device)
 
+    def generate_with_hidden_states(self, prompt):
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
+            # hidden_states, sequences, past_key_values
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=0.7,
-                pad_token_id=self.tokenizer.eos_token_id,
+                max_new_tokens=self.max_new_tokens,
                 output_hidden_states=True,
                 return_dict_in_generate=True
-            )
-
+            )       
+        # get thinking tokens, start and end indices in output
         thinking_tokens, thinking_indices = self.extract_thinking_trace_tokens(outputs.sequences)
 
+        # get hidden states
         if thinking_tokens is not None:
             start_idx, end_idx = thinking_indices
 
             thinking_hidden_states = []
             for layer_idx, layer_hidden_states in enumerate(outputs.hidden_states):
+                print(len(layer_hidden_states))
+                print(layer_hidden_states[0].shape)
+                print(layer_hidden_states[1].shape)
+                quit()
                 layer_thinking_states = []
+                # TODO : fix
                 for token_idx in range(start_idx, min(end_idx, len(layer_hidden_states[0]))):
                     layer_thinking_states.append(layer_hidden_states[0][token_idx].cpu().numpy())
                 thinking_hidden_states.append(np.array(layer_thinking_states))
@@ -132,58 +164,51 @@ class HiddenStateStorage:
             json.dump(metadata_list, f, indent=2)
 
 
-def main():
-    extractor = ThinkingTraceExtractor()
-    extractor.load_model()
-
-    dataset = extractor.load_dataset()
+def main(config):
+    extractor = ThinkingTraceExtractor(config)
+    extractor.load_model(config)
+    extractor.load_dataset(config)
+    # TODO
     storage = HiddenStateStorage()
 
-    prompt_template = "Please reason step by step, and put your final answer within \\boxed{}. {question}"
-
-    batch_size = 10
-    num_samples = min(100, len(dataset))
-
     metadata_list = []
+    bar = tqdm(total=len(extractor.dataset))
+    for i, example in enumerate(extractor.dataset):
 
-    for i in tqdm(range(0, num_samples, batch_size), desc="Processing batches"):
-        batch_data = dataset[i:i+batch_size]
+        question = example['problem']
+        answer = example['answer']
+        difficulty = example['difficulty']
 
-        for j, sample in enumerate(batch_data):
-            question = sample.get('question', sample.get('prompt', ''))
-            if not question:
-                continue
+        # get prompt
+        prompt = extractor.format_prompt(question)
 
-            prompt = prompt_template.format(question=question)
+        # TODO
+        result = extractor.generate_with_hidden_states(prompt)
 
-            try:
-                result = extractor.generate_with_hidden_states(prompt, max_new_tokens=512)
+        sample_id = i + j
+        result['model_name'] = extractor.model_name
+        result['sample_id'] = sample_id
+        result['question'] = question
 
-                sample_id = i + j
-                result['model_name'] = extractor.model_name
-                result['sample_id'] = sample_id
-                result['question'] = question
+        storage.save_hidden_states_hdf5(result, sample_id)
 
-                storage.save_hidden_states_hdf5(result, sample_id)
+        metadata = {
+            'sample_id': sample_id,
+            'question': question,
+            'thinking_text': result['thinking_text'],
+            'num_layers': result['num_layers'],
+            'thinking_token_count': len(result['thinking_hidden_states'][0]) if result['thinking_hidden_states'] else 0,
+            'has_thinking_trace': len(result['thinking_text']) > 0
+        }
+        metadata_list.append(metadata)
 
-                metadata = {
-                    'sample_id': sample_id,
-                    'question': question,
-                    'thinking_text': result['thinking_text'],
-                    'num_layers': result['num_layers'],
-                    'thinking_token_count': len(result['thinking_hidden_states'][0]) if result['thinking_hidden_states'] else 0,
-                    'has_thinking_trace': len(result['thinking_text']) > 0
-                }
-                metadata_list.append(metadata)
-
-            except Exception as e:
-                print(f"Error processing sample {i+j}: {e}")
-                continue
-
-        storage.save_batch_metadata(metadata_list)
+    storage.save_batch_metadata(metadata_list)
 
     print(f"Processed {len(metadata_list)} samples. Hidden states saved to {storage.storage_dir}")
 
 
 if __name__ == "__main__":
-    main()
+    # get config
+    parser = HfArgumentParser(ExtractTraceConfig)
+    config = parser.parse_args_into_dataclasses()[0]
+    main(config)
