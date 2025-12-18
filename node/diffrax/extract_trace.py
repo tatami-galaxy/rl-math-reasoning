@@ -7,6 +7,7 @@ from tqdm import tqdm
 import re
 import numpy as np
 import h5py
+from safetensors.torch import save_file
 import torch
 
 from transformers import(
@@ -46,8 +47,6 @@ class ThinkingTraceExtractor:
             config.model_name,
             dtype=config.model_dtype,
             device_map="auto",
-            output_hidden_states=True,
-            return_dict_in_generate=True
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -94,31 +93,39 @@ class ThinkingTraceExtractor:
     def generate_with_hidden_states(self, prompt):
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
-            # hidden_states, sequences, past_key_values
+            # hidden_states :
+            # Outer Tuple (Length = Number of Generated Tokens) : Each element corresponds to one "step" of generation
+            # Middle Tuple (Length = Number of Layers + 1)
+            # Inner Tensor: The actual hidden state tensor for that specific layer at that specific step
+            # shape of hidden_states[step][layer] : 
+            # Step 0 (First Token): The shape is (batch_size, prompt_length, hidden_size)
+            # Steps 1 to N: The shape is (batch_size, 1, hidden_size)
             outputs = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
                 output_hidden_states=True,
                 return_dict_in_generate=True
-            )       
+            )     
         # get thinking tokens, start and end indices in output
+        # sequences : (batch_size, sequence_length)
         thinking_tokens, thinking_indices = self.extract_thinking_trace_tokens(outputs.sequences)
 
         # get hidden states
         if thinking_tokens is not None:
             start_idx, end_idx = thinking_indices
 
-            thinking_hidden_states = []
-            for layer_idx, layer_hidden_states in enumerate(outputs.hidden_states):
-                print(len(layer_hidden_states))
-                print(layer_hidden_states[0].shape)
-                print(layer_hidden_states[1].shape)
-                quit()
+            # states for each layer
+            thinking_hidden_states = {}
+            # token_posn ranges over generation length
+            # posn_hidden_states contains layer+1 hidden states for each posn
+            for token_posn, posn_hidden_states in enumerate(outputs.hidden_states):
+                # TODO : 
                 layer_thinking_states = []
-                # TODO : fix
+                # first position has shape batch_size, prompt_length, hidden_size
                 for token_idx in range(start_idx, min(end_idx, len(layer_hidden_states[0]))):
                     layer_thinking_states.append(layer_hidden_states[0][token_idx].cpu().numpy())
                 thinking_hidden_states.append(np.array(layer_thinking_states))
+            quit()
 
             return {
                 "generated_text": self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False),
