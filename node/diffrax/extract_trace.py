@@ -60,7 +60,6 @@ class ThinkingTraceExtractor:
 
     def extract_thinking_trace_tokens(self, generated_ids):
         generated_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=False)
-
         start_pattern = r'{}\s*\n'.format(REASONING_START)
         end_pattern = r'\s*\n{}'.format(REASONING_END)
 
@@ -113,26 +112,23 @@ class ThinkingTraceExtractor:
         # get hidden states
         if thinking_tokens is not None:
             start_idx, end_idx = thinking_indices
-
             # states for each layer
-            thinking_hidden_states = {}
+            # each model -> folder -> folder for each layer -> tensors of traces
+            num_layers = len(outputs.hidden_states[0]) # including embedding
+            thinking_hidden_states = {l: [] for l in range(num_layers)}
             # token_posn ranges over generation length
             # posn_hidden_states contains layer+1 hidden states for each posn
-            for token_posn, posn_hidden_states in enumerate(outputs.hidden_states):
-                # TODO : 
-                layer_thinking_states = []
-                # first position has shape batch_size, prompt_length, hidden_size
-                for token_idx in range(start_idx, min(end_idx, len(layer_hidden_states[0]))):
-                    layer_thinking_states.append(layer_hidden_states[0][token_idx].cpu().numpy())
-                thinking_hidden_states.append(np.array(layer_thinking_states))
-            quit()
+            # first position has shape batch_size, prompt_length, hidden_size
+            for token_posn, posn_hidden_states in enumerate(outputs.hidden_states[1:]):
+                # posn_hidden_states -> (Length = Number of Layers + 1)
+                # TODO : how to match start idx?
+                
 
             return {
                 "generated_text": self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False),
                 "thinking_text": self.tokenizer.decode(thinking_tokens[0], skip_special_tokens=True),
-                "thinking_hidden_states": thinking_hidden_states,
+                "all_layer_thinking_states": thinking_hidden_states,
                 "thinking_token_indices": thinking_indices.tolist(),
-                "num_layers": len(thinking_hidden_states)
             }
         else:
             return {
