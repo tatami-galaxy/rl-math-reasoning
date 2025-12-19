@@ -188,7 +188,6 @@ class ThinkingTraceExtractor:
             print('\n\n\n')
             layer_trace = f.get_tensor("layer_trace")
             print(layer_trace.shape)
-            quit()
 
 
 def main(config):
