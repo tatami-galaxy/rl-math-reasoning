@@ -77,3 +77,12 @@ def process_sft_dataset(dataset, tokenizer, config):
     ).shuffle(config.seed)
 
     return dataset
+
+
+def process_rl_dataset(x):
+    return {
+        "prompt": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": x["problem"]},
+        ],
+    }
