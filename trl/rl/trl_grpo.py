@@ -52,7 +52,10 @@ if __name__ == "__main__":
         #device_map="auto",
         #attn_implementation='flash_attention_2',
     )
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    if config.tokenizer_name is not None:
+        tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(config.model_name)
 
     # PEFT
     if config.use_peft:
@@ -73,19 +76,13 @@ if __name__ == "__main__":
     # dataset
     dataset = load_dataset(config.dataset, split=config.dataset_split)
     # process dataset
-    rl_dataset = dataset.map(process_rl_dataset).remove_columns(['problem'])  
+    rl_dataset = dataset.map(process_rl_dataset, load_from_cache_file=False).remove_columns(['problem'])  
     rl_dataset = rl_dataset.rename_column('answer', 'solution')
-    print(rl_dataset[0])
-    print('\n\n')
-    print(tokenizer.apply_chat_template(rl_dataset[0]['prompt'], tokenize=False, add_generation_prompt=True))
-    print('\n\n')
-    # TODO : add think
-    quit()
+    #print(tokenizer.apply_chat_template(rl_dataset[0]['prompt'], tokenize=False, add_generation_prompt=True))
 
     # set output dir
     model_name = config.model_name.split("/")[-1]
-    dataset_name = config.nl_dataset.split("/")[-1]
-    checkpoint_folder = model_name + '_nl_fl'
+    checkpoint_folder = model_name + '_polaris'
     output_dir = root+"/"+config.output_dir+"/"+checkpoint_folder
 
     # TODO : sampling params -> default max_tokens : 2048 

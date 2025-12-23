@@ -15,6 +15,7 @@ class TRLRLHyps:
 
     # Model parameters
     model_name: str = field(default=None)
+    tokenizer_name: str = field(default=None)
     model_revision: str = field(default="main")
 
     # PEFT parameters

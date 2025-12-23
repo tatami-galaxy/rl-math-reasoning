@@ -4,8 +4,7 @@ from functools import partial
 
 
 SYSTEM_PROMPT = "You are given a math problem. Please reason step by step, and put your final answer within \\boxed{}."
-REASONING_START = "<think>"
-REASONING_END = "</think>" 
+SYSTEM_PROMPT_THINK = "You are given a math problem. Think carefully before producing the final answer. Put the thinking process between <think> and </think> tags. Reason step by step, and put your final answer within \\boxed{}."
 
 
 def get_root_dir():
@@ -17,37 +16,10 @@ def get_root_dir():
     return root
 
 
-def create_chat_template(tokenizer):
-
-    chat_template = \
-        "{% if messages[0]['role'] == 'system' %}"\
-            "{{ messages[0]['content'] + eos_token }}"\
-            "{% set loop_messages = messages[1:] %}"\
-        "{% else %}"\
-            "{{ '{system_prompt}' + eos_token }}"\
-            "{% set loop_messages = messages %}"\
-        "{% endif %}"\
-        "{% for message in loop_messages %}"\
-            "{% if message['role'] == 'user' %}"\
-                "{{ message['content'] }}"\
-            "{% elif message['role'] == 'assistant' %}"\
-                "{{ message['content'] + eos_token }}"\
-            "{% endif %}"\
-        "{% endfor %}"\
-        "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
-        "{% endif %}"
-    
-    chat_template = chat_template.replace("'{system_prompt}'", f"'{SYSTEM_PROMPT}'")
-    chat_template = chat_template.replace("'{reasoning_start}'", f"'{REASONING_START}'")    
-    tokenizer.chat_template = chat_template
-
-    return tokenizer
-
-
 # format dataset for sft
 def format_dataset(x, tokenizer, add_think=False):
 
-    think_token = REASONING_START if add_think else ''
+    think_token = '<think>' if add_think else ''
     messages =  [
         {"role" : "system",    "content" : SYSTEM_PROMPT},
         # add <think> token after question
@@ -82,7 +54,7 @@ def process_sft_dataset(dataset, tokenizer, config):
 def process_rl_dataset(x):
     return {
         "prompt": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT_THINK},
             {"role": "user", "content": x["problem"]},
         ],
     }

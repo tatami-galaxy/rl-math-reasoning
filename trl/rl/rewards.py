@@ -22,39 +22,26 @@ def get_reward_functions(config):
 # If gold is not parseable → return `None` to skip the example.
 def accuracy_reward(**kwargs):
     # each kwarg list of effective batch size
-    x_types = kwargs['type']
+    # prompts, completions, completion_ids, solution, difficulty, trainer_state
     contents = [completion[0]["content"] for completion in kwargs['completions']]
     solutions = kwargs['solution']
     rewards = []
     for i in range(len(contents)):
         content = contents[i]
+        print(content)
+        quit()
         sol = solutions[i]
-        x_type = x_types[i]
-        # accuracy reward only for nl
-        if x_type != 'nl': reward = None
+        gold_parsed = parse(sol)
+        if len(gold_parsed) != 0:
+            answer_parsed = parse(content)
+            reward = float(verify(gold_parsed, answer_parsed))
         else:
-            gold_parsed = parse(sol)
-            if len(gold_parsed) != 0:
-                # We require the answer to be provided in correct latex (no malformed operators)
-                """answer_parsed = parse(
-                    content,
-                    extraction_config=[
-                        LatexExtractionConfig(
-                            normalization_config=NormalizationConfig(units=True),
-                            # Ensures that boxed is tried first
-                            boxed_match_priority=0,
-                            try_extract_without_anchor=False,
-                        )
-                    ],
-                    extraction_mode="first_match",
-                )"""
-                answer_parsed = parse(content)
-                reward = float(verify(gold_parsed, answer_parsed))
-            else:
-                # TODO : verify what is meant by skipping
-                # if the gold solution cannot be parsed, we assign `None` to skip this example
-                reward = None
+            # TODO : verify what is meant by skipping
+            # if the gold solution cannot be parsed, we assign `None` to skip this example
+            reward = None
         rewards.append(reward)
+    print(rewards)
+    quit()
     return rewards
 
 
@@ -62,20 +49,17 @@ def accuracy_reward(**kwargs):
 # If both gold and prediction are parseable → use math verification.
 # If gold is not parseable → return `None` to skip the example.
 # TODO : edit
-def reasoning_accuracy_reward(
-    completions: list[list[dict[str, str]]],
-    solution: list[str],
-    reasoning_delimiters: list[str] | None = None,
-    **kwargs,
-) -> list[float | None]:
-    
-    if reasoning_delimiters is None:
-        # Use sensible defaults for majority of reasoning models
-        reasoning_delimiters = ["</think>"]
-
+def reasoning_accuracy_reward(**kwargs):
+     # each kwarg list of effective batch size
+    # prompts, completions, completion_ids, solution, difficulty, trainer_state
+    contents = [completion[0]["content"] for completion in kwargs['completions']]
+    solutions = kwargs['solution']
+    reasoning_delimiters = ["</think>"]
     rewards = []
-    contents = [completion[0]["content"] for completion in completions]
-    for content, sol in zip(contents, solution, strict=True):
+    for i in range(len(contents)):
+        content = contents[i]
+        sol = solutions[i]
+        # Remove reasoning content:
         # Split final answer from reasoning content
         is_reasoning_complete = False
         for delim in reasoning_delimiters:
@@ -90,24 +74,12 @@ def reasoning_accuracy_reward(
 
         gold_parsed = parse(sol)
         if len(gold_parsed) != 0:
-            # We require the answer to be provided in correct latex (no malformed operators)
-            answer_parsed = parse(
-                content,
-                extraction_config=[
-                    LatexExtractionConfig(
-                        boxed_match_priority=0,
-                        normalization_config=NormalizationConfig(
-                            units=True,
-                        ),
-                        try_extract_without_anchor=False,
-                    )
-                ],
-                extraction_mode="first_match",
-            )
+            answer_parsed = parse(content)
             reward = float(verify(gold_parsed, answer_parsed))
         else:
-            # If the gold solution cannot be parsed, we assign `None` to skip this example
-            reward = None
+            # TODO : verify what is meant by skipping
+            # if the gold solution cannot be parsed, we assign `None` to skip this example
+            reward = None 
         rewards.append(reward)
 
     return rewards
