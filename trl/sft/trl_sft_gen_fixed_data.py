@@ -60,8 +60,6 @@ def main():
     dataset = dataset.filter(
         lambda x: len(tokenizer(x["trace"])['input_ids']) <= config.max_seq_len
     )
-    print(dataset)
-    quit()
 
     # split dataset into train and eval
     dataset = dataset.train_test_split(test_size=config.total_eval_samples, seed=config.seed)

@@ -7,7 +7,6 @@ from rl_config import TRLRLHyps
 import logging
 import warnings
 
-import torch
 from transformers import (
     HfArgumentParser,
     AutoModelForCausalLM,
@@ -21,6 +20,7 @@ from trl import (
     GRPOConfig,
     GRPOTrainer,
 )
+from unsloth import FastLanguageModel
 
 
 if __name__ == "__main__":
@@ -46,13 +46,15 @@ if __name__ == "__main__":
                 print('max model length set to {}'.format(config.vllm_max_model_length))
 
     # get model and tokenizer
-    model = AutoModelForCausalLM.from_pretrained(
-        config.model_name,
-        revision = config.model_revision,
-        dtype = "auto",
-        #device_map="auto",
-        #attn_implementation='flash_attention_2',
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name = "unsloth/Qwen3-4B-Base",
+        max_seq_length = max_seq_length,
+        load_in_4bit = False, # False for LoRA 16bit
+        fast_inference = True, # Enable vLLM fast inference
+        max_lora_rank = lora_rank,
+        gpu_memory_utilization = 0.9, # Reduce if out of memory
     )
+
     if config.tokenizer_name is not None:
         tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
     else:
@@ -71,12 +73,8 @@ if __name__ == "__main__":
                 "gate_proj", "up_proj", "down_proj",
             ],
         )
-        model = get_peft_model(model, lora_config,) #autocast_adapter_dtype=False)
+        model = get_peft_model(model, lora_config)
         #model.print_trainable_parameters()
-        # TODO : check trainable params dtype
-        #for name, param in model.named_parameters():
-            #print(name, param.dtype)
-        #quit()
 
     # dataset
     dataset = load_dataset(config.dataset, split=config.dataset_split)
@@ -87,7 +85,7 @@ if __name__ == "__main__":
 
     # set output dir
     model_name = config.model_name.split("/")[-1]
-    checkpoint_folder = model_name + '_polaris_' + str(config.max_gen_len)
+    checkpoint_folder = model_name + '_polaris'
     output_dir = root+"/"+config.output_dir+"/"+checkpoint_folder
 
     # TODO : sampling params -> default max_tokens : 2048 
@@ -114,9 +112,6 @@ if __name__ == "__main__":
         num_train_epochs = config.num_train_epochs,
         gradient_checkpointing = False,
         ddp_find_unused_parameters = False,
-
-        ###
-        #bf16=True,
 
         # optim args
         learning_rate = config.learning_rate,

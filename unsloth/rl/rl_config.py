@@ -1,63 +1,75 @@
-import chz
+from dataclasses import dataclass, field
 
-@chz.chz
-class RLHyps:
 
+@dataclass
+class TRLRLHyps:
+
+    # seed
     seed: int = 42
 
     # Dataset
-    # math-dataset/DeepScaleR-Preview-Dataset
-    # POLARIS-Project/Polaris-Dataset-53K
-    # open-r1/DAPO-Math-17k-Processed
-    rl_dataset: str = "open-r1/DAPO-Math-17k-Processed"
-    rl_dataset_config: str = "en"
+    dataset: str = field(default="POLARIS-Project/Polaris-Dataset-53K") # zwhe99/DeepMath-103K -> filtered by max trace len
+    dataset_split: str = field(default="train")
+    sample: bool = field(default=False)
+    num_samples: int = field(default=1000)
 
     # Model parameters
-    model_name: str = None
-    lora_config: str = None
-    load_checkpoint_path: str | None = None
-    load_in_4bit: bool = False
-    load_in_8bit: bool = False
-    load_in_16bit: bool = True
-    max_seq_len: int = 8192     # 4096, 8192
+    model_name: str = field(default=None)
+    tokenizer_name: str = field(default=None)
+    model_revision: str = field(default="main")
 
-    # Training parameters
-    temperature: float = 1.0
-    learning_rate: float = 5e-6
-    weight_decay: float = 0.01
-    warmup_ratio: float = 0.1
-    lr_scheduler_type: str = "linear"
-    optim: str = "adamw_8bit"
-    logging_steps: int = 1
-    per_device_train_batch_size: int = 8
-    gradient_accumulation_steps: int = 1 # Increase to 4 for smoother training
-    num_generations: int = 8 # Decrease if out of memory
-    num_train_epochs: int = 1 # Set to 1 for a full training run
-    max_steps: int = 100
-    save_steps: int = 100
-    fp16: bool = False
+    # PEFT parameters
+    use_peft: bool = field(default=False)
+    lora_rank: int = field(default=4)
+    lora_alpha: int = field(default=8) # 2*rank speeds up training (unsloth suggestion)
 
+    # training parameters
+    # batch size must be a multiple of num_generations to fit all generations of a prompt in a single batch
+    # if batch_size == num_genarations, entire batch is completions from single prompt
+    # elif batch_size == n * num_generations, batch is num_genetations completetions from each of the n prompts
+    # TODO : 2048 -> enforce model to be more concise?
+    max_gen_len: int = field(default=2048)  # 2048, 4096, 8192, 16384
+    num_gens: int = field(default=8)
+    max_prompt_len: int = field(default=256) # 512, TODO : deprecated
+    proof_think: bool = field(default=False)
+    per_device_train_batch_size: int = field(default=2)
+    gradient_accumulation_steps: int = field(default=8)
+    num_train_epochs: int = field(default=1)
 
-    # vLLM parameters
-    fast_inference: bool = True
-    gpu_memory_utilization: float = 0.9
-    min_p: float = 0.1
-    top_p: float = 1.0
-    top_k: int = -1
+    # reward function
+    acc_reward: bool = field(default=False)
+    think_reward: bool = field(default=False)
+    overlong_reward: bool = field(default=False)
 
-    # LoRA parameters
-    lora_rank: int = 32
-    lora_alpha: int | None = None
+    # logging
+    per_device_eval_batch_size: int = field(default=4)
+    logging_steps: int = field(default=50)
+    save_steps: int = field(default=100)
+    save_total_limit: int = field(default=2)
+    resume_from_checkpoint: bool = field(default=False)
+    output_dir: str = field(default="/models/trl/rl_checkpoints")
 
-    # Checkpointing and evaluation
-    save_every: int = 20
-    eval_every: int = 10
+    # Optimizer parameters
+    optim: str = field(default="adamw_torch_fused") # sgd
+    learning_rate: float = field(default=2e-5)  # 1e-4, 2e-5 
+    warmup_steps: int = field(default=8)
+    lr_scheduler_type: str = field(default="constant")   # linear, constant
 
-    # Adam optimizer parameters
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.95
-    adam_eps: float = 1e-8
+    # vLLM
+    use_vllm: bool = field(default=False)
+    vllm_model_impl: str = field(default="vllm") # transformers
+    vllm_mode: str = field(default='server') # server, colocate
+    vllm_importance_sampling_correction: bool = field(default=True)
+    vllm_importance_sampling_cap: float = field(default=2.0)
+    # server mode
+    vllm_host: str = field(default="127.0.0.1")
+    vllm_port: int = field(default=None)
+    vllm_timeout: float = field(default=240.0)
+    # colocate mode
+    vllm_gpu_memory_utilization: float = field(default=0.3)
+    vllm_max_model_length: int = field(default=None) # set it to > maximum prompt length + max_completion_length
+    vllm_tensor_parallel_size: int = field(default=1)
+    vllm_enable_sleep_mode: bool = field(default=False) # low mem, high latency
 
-    # Logging parameters
-    output_dir: str = "/models/rl_checkpoints"
-    log_path: str = "./rl_logs"
+    # LEAN
+    lean_server_timeout: float = field(default=1200.0)

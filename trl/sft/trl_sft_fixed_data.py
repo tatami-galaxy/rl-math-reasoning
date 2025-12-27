@@ -3,7 +3,7 @@ import sys
 sys.path.append("../../")
 from trl_sft_config import TRLSFTHyps
 from utils import process_sft_dataset
-from utils import get_root_dir, create_chat_template
+from utils import get_root_dir
 from trl_sft_config import TRLSFTHyps
 
 from datasets import load_dataset
@@ -50,13 +50,13 @@ def main():
     )
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
 
-    # create or modify chat template
-    if tokenizer.chat_template is None:
-        print("No chat template found. Creating custom chat template...")
-        tokenizer = create_chat_template(tokenizer)
-        config.add_think = True
-    else:
-        print("Chat template found.")
+    # TODO : create or modify chat template
+    #if tokenizer.chat_template is None:
+        #print("No chat template found. Creating custom chat template...")
+        #tokenizer = create_chat_template(tokenizer)
+        #config.add_think = True
+    #else:
+        #print("Chat template found.")
 
     # load dataset
     dataset = load_dataset(config.processed_dataset) 
