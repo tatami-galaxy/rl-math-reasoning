@@ -34,6 +34,7 @@ class TRLRLHyps:
     proof_think: bool = field(default=False)
     per_device_train_batch_size: int = field(default=2)
     gradient_accumulation_steps: int = field(default=8)
+    gradient_checkpointing: bool = field(default=False)
     num_train_epochs: int = field(default=1)
 
     # reward function

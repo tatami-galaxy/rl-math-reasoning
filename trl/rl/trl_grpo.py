@@ -112,7 +112,7 @@ if __name__ == "__main__":
         per_device_train_batch_size = config.per_device_train_batch_size,
         gradient_accumulation_steps = config.gradient_accumulation_steps,
         num_train_epochs = config.num_train_epochs,
-        gradient_checkpointing = False,
+        gradient_checkpointing = config.gradient_checkpointing,
         ddp_find_unused_parameters = False,
 
         ###
