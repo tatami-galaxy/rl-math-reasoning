@@ -5,9 +5,8 @@ from dataclasses import dataclass, field
 from utils import get_root_dir
 
 from transformers import HfArgumentParser
-from process_trace import download_layer_traces
-from huggingface_hub import snapshot_download
-from safetensors import safe_open
+from process_trace import download_layer_traces, segment_representations
+
 
 import jax
 import jax.nn as jnn
@@ -29,10 +28,12 @@ class TraceHyps:
 
     # trace data
     hf_token: str = field(default=None)
+    model_name: str = field(default="Qwen/Qwen3-4B-Thinking-2507")
     trace_data: str = field(default="Ujan/qwen3-4b-thinking-math-trace")
     trace_layer: int = field(default=None)
     num_samples: int = field(default=500) # MATH500
     trace_dir: str = field(default="/data/traces/")
+    segment_by: str = field(default="\n")
 
     # neural ode
     node_depth: int = field(default=3)
@@ -50,19 +51,13 @@ if __name__ == "__main__":
     config = parser.parse_args_into_dataclasses()[0]
     if config.hf_token is None: raise ValueError("Pass in HF token")
     if config.trace_layer is None: raise ValueError("Pass in layer to get trace reps for")
+    print("WARNING : Make sure model name matches with trace data!")
 
     # download trace data if not already downloaded
     trace_dir = download_layer_traces(root, config)
 
-    # process data
-
-
-    layer_data_dir = trace_dir+"/layer_"+str(config.trace_layer)
-    with safe_open(layer_data_dir+"/1.safetensors", framework="jax", device="cpu") as f:
-        metadata = f.metadata()
-        tensors = {k: f.get_tensor(k) for k in f.keys()}
-        print(tensors['layer_trace'].shape)
-        print(type(tensors['layer_trace']))
+    # process data if not already processed
+    processed_trace_dir = segment_representations(trace_dir, config)
 
 
     
