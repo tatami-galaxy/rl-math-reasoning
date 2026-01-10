@@ -3,8 +3,8 @@ sys.path.append('../../')
 from tqdm import tqdm
 import re
 import os
-import json
-from safetensors.torch import save_file, safe_open
+
+from safetensors.torch import save_file
 import torch
 
 from transformers import(
@@ -18,8 +18,6 @@ from extract_trace_config import ExtractTraceConfig
 from utils import(
     get_root_dir,
     SYSTEM_PROMPT,
-    REASONING_START,
-    REASONING_END,
 )
 
 
@@ -86,8 +84,9 @@ class ThinkingTraceExtractor:
 
     def extract_thinking_trace_tokens(self, generated_ids):
         generated_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=False)
-        start_pattern = r'{}\s*\n'.format(REASONING_START)
-        end_pattern = r'\s*\n{}'.format(REASONING_END)
+
+        start_pattern = r"<think>"
+        end_pattern = r"</think>"
 
         # find think start and end positions in text
         start_match = re.search(start_pattern, generated_text)
@@ -95,8 +94,8 @@ class ThinkingTraceExtractor:
 
         if start_match and end_match:
             # find think start and end positions in text
-            thinking_start_pos = start_match.end()
-            thinking_end_pos = end_match.start()
+            thinking_start_pos = start_match.end() # inclusive
+            thinking_end_pos = end_match.start() # not inclusive
 
             # get thinking text
             thinking_text = generated_text[thinking_start_pos:thinking_end_pos]
@@ -105,6 +104,7 @@ class ThinkingTraceExtractor:
             thinking_tensor = torch.tensor(thinking_tokens, device=self.model.device).unsqueeze(0)
 
             # find start and end token position for thinking trace
+            # tokenizing upto <think> separately -> possible num tokens mismatch?
             start_idx_in_generated = len(self.tokenizer.encode(
                 generated_text[:thinking_start_pos], add_special_tokens=False
             ))
@@ -130,7 +130,7 @@ class ThinkingTraceExtractor:
                 max_new_tokens=self.max_new_tokens,
                 output_hidden_states=True,
                 return_dict_in_generate=True
-            )     
+            )    
         # get thinking tokens, start and end indices in output
         # sequences : (batch_size, sequence_length)
         thinking_tokens, thinking_indices = self.extract_thinking_trace_tokens(outputs.sequences)
@@ -143,18 +143,27 @@ class ThinkingTraceExtractor:
             prompt_length = outputs.hidden_states[0][0].shape[1]
             start_idx = start_idx - prompt_length
             end_idx = end_idx - prompt_length
+
+            # TODO : fix, start_id = -1
+            print(start_idx, end_idx)
+            quit()
+
             # states for each layer
             # each model -> folder -> folder for each layer -> tensors of traces
             num_layers = len(outputs.hidden_states[0]) # including embedding
             thinking_hidden_states = {l: [] for l in range(num_layers)}
             # token_posn ranges over generation length
             # posn_hidden_states contains layer+1 hidden states for each posn
+            # first posn is prompt -> ignore
             for token_posn, posn_hidden_states in enumerate(outputs.hidden_states[1:]):
                 if token_posn >= start_idx and token_posn < end_idx:
                     for l in range(num_layers):
                         thinking_hidden_states[l].append(posn_hidden_states[l].flatten().cpu())
             # sanity check
+            print(len(thinking_hidden_states[0]))
+            print(len(thinking_hidden_states[1]))
             assert thinking_tokens.shape[1] == len(thinking_hidden_states[0])
+            quit()
             return {
                 "generated_text": self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False),
                 "thinking_text": self.tokenizer.decode(thinking_tokens[0], skip_special_tokens=True),
@@ -191,16 +200,6 @@ class ThinkingTraceExtractor:
             )
 
 
-    def load_hidden_states(self, layer, id):
-        filename = "layer_" + str(layer) + "/" + str(id) + ".safetensors"
-        with safe_open(self.storage_dir + "/" + filename, framework="pt", device="cpu") as f:
-            metadata = f.metadata()
-            print("Metadata:", metadata)
-            print('\n\n\n')
-            layer_trace = f.get_tensor("layer_trace")
-            print(layer_trace.shape)
-
-
 def main(config):
 
     extractor = ThinkingTraceExtractor(config)
@@ -212,6 +211,7 @@ def main(config):
     index = extractor.get_trace_ckpt()
 
     bar = tqdm(total=len(extractor.dataset))
+    fail_count = 0
     for i, example in enumerate(extractor.dataset):
 
         # skip till ckpt
@@ -226,7 +226,11 @@ def main(config):
         result = extractor.generate_with_hidden_states(prompt)
 
         # no think trace
-        if len(result["all_layer_thinking_states"]) < 1: continue
+        if len(result["all_layer_thinking_states"]) < 1: 
+            print('failed')
+            fail_count += 1
+            bar.update(1)
+            continue
 
         # add metadata
         result['index'] = str(i)
@@ -237,11 +241,11 @@ def main(config):
         # save tensors
         extractor.save_hidden_states(result)
 
-        # load tensors
-        #extractor.load_hidden_states(storage_dir, 5, i)
-
         bar.update(1)
 
+    print('Done.')
+    print('Num failed : {}'.format(fail_count))
+    
 
 if __name__ == "__main__":
     # get config
