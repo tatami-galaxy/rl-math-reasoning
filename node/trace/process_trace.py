@@ -34,9 +34,14 @@ def segment_representations(trace_dir, config):
 
             # sanity check
             assert len(input_ids) == tensors['layer_trace'].shape[0]
+            assert len(offsets) == tensors['layer_trace'].shape[0]
 
             # find segment boundaries
             seg_posns = [i for i, c in enumerate(metadata['thinking_text']) if c == config.segment_by]
 
-            # 
-            for rep_id, (start, end) in zip(input_ids, offsets):
+            # collect token reps for each segment and average
+            segment_reps = []
+            current_seg = []
+            for token_rep, (start, end) in zip(tensors['layer_trace'], offsets):
+                print(token_rep.shape)
+                quit()
