@@ -143,10 +143,11 @@ class ThinkingTraceExtractor:
             prompt_length = outputs.hidden_states[0][0].shape[1]
             start_idx = start_idx - prompt_length
             end_idx = end_idx - prompt_length
-
-            # TODO : fix, start_id = -1
-            print(start_idx, end_idx)
-            quit()
+            # adjust if prompt length off by ~1
+            if start_idx < 0:
+                diff = -start_idx
+                start_idx += diff
+                end_idx += diff
 
             # states for each layer
             # each model -> folder -> folder for each layer -> tensors of traces
@@ -159,11 +160,10 @@ class ThinkingTraceExtractor:
                 if token_posn >= start_idx and token_posn < end_idx:
                     for l in range(num_layers):
                         thinking_hidden_states[l].append(posn_hidden_states[l].flatten().cpu())
+                        
             # sanity check
-            print(len(thinking_hidden_states[0]))
-            print(len(thinking_hidden_states[1]))
             assert thinking_tokens.shape[1] == len(thinking_hidden_states[0])
-            quit()
+
             return {
                 "generated_text": self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False),
                 "thinking_text": self.tokenizer.decode(thinking_tokens[0], skip_special_tokens=True),
