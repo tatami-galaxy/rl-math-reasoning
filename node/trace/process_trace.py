@@ -3,6 +3,8 @@ from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
 
+import jax.numpy as jnp
+
 
 def download_layer_traces(root, config):
     layer_pattern = "layer_"+str(config.trace_layer)+"/*"
@@ -28,8 +30,9 @@ def segment_representations(trace_dir, config):
             tensors = {k: f.get_tensor(k) for k in f.keys()}
 
             # encode thinking text with offset mapping to identify segment boundaries in representations
+            # return_offsets_mapping -> return (char_start, char_end) for each token
             enc = tokenizer(metadata['thinking_text'], return_offsets_mapping=True, add_special_tokens=False)
-            input_ids = enc["input_ids"]
+            input_ids = enc["input_ids"] # token ids
             offsets = enc["offset_mapping"]
 
             # sanity check
@@ -42,6 +45,13 @@ def segment_representations(trace_dir, config):
             # collect token reps for each segment and average
             segment_reps = []
             current_seg = []
+            seg_id = 0
             for token_rep, (start, end) in zip(tensors['layer_trace'], offsets):
-                print(token_rep.shape)
-                quit()
+                if seg_id < len(seg_posns) and start >= seg_posns[seg_id] + 1:
+                    avg_seg_rep = jnp.mean(jnp.stack(current_seg), axis=0)
+                    segment_reps.append(avg_seg_rep)
+                    current_seg = []
+                    seg_id += 1
+                current_seg.append(token_rep)
+
+            # TODO : save segment reps
