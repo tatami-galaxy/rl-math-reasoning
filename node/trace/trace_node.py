@@ -28,11 +28,13 @@ class TraceHyps:
 
     # trace data
     hf_token: str = field(default=None)
+    dataset_name: str = field(default="HuggingFaceH4/MATH-500")
     model_name: str = field(default="Qwen/Qwen3-4B-Thinking-2507")
-    trace_data: str = field(default="Ujan/qwen3-4b-thinking-math-trace")
+    #trace_data: str = field(default="Ujan/qwen3-4b-thinking-math-trace")
     trace_layer: int = field(default=None)
     num_samples: int = field(default=500) # MATH500
-    trace_dir: str = field(default="/data/traces/")
+    #trace_dir: str = field(default="/data/traces/")
+    trace_dir: str = field(default="/data/trace_tensors/")
     segment_by: str = field(default="\n")
 
     # neural ode
@@ -54,11 +56,15 @@ if __name__ == "__main__":
     print("WARNING : Make sure model name matches with trace data!")
 
     # download trace data if not already downloaded
-    trace_dir = download_layer_traces(root, config)
+    #trace_dir = download_layer_traces(root, config)
 
-    # process data if not already processed
-    processed_trace_dir = segment_representations(trace_dir, config)
+    # process data 
+    segment_reps = segment_representations(root, config)
 
+    # TODO : lower data dimensionality
+
+    # init node
+    
 
     
 

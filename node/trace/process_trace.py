@@ -18,10 +18,12 @@ def download_layer_traces(root, config):
     return trace_dir
 
 
-def segment_representations(trace_dir, config):
+def segment_representations(root, config):
 
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-    layer_data_dir = trace_dir+"/layer_"+str(config.trace_layer)
+    layer_data_dir = root + "/" + config.trace_dir + "/" + config.dataset_name.split("/")[-1]
+    layer_data_dir += "/" + config.model_name.split("/")[-1]
+    layer_data_dir += "/" + "layer_" + str(config.trace_layer)
 
     # iterate over tensors from all examples
     for rep_file in os.scandir(layer_data_dir):
@@ -54,4 +56,6 @@ def segment_representations(trace_dir, config):
                     seg_id += 1
                 current_seg.append(token_rep)
 
-            # TODO : save segment reps
+            # list of jax arrays
+            # TODO : maybe save
+            return segment_reps 
