@@ -34,7 +34,7 @@ class TraceHyps:
     trace_layer: int = field(default=None)
     num_samples: int = field(default=500) # MATH500
     #trace_dir: str = field(default="/data/traces/")
-    trace_dir: str = field(default="/data/trace_tensors/")
+    trace_dir: str = field(default="/data/Trace-Tensors/")
     segment_by: str = field(default="\n")
 
     # neural ode

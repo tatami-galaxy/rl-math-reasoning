@@ -65,7 +65,9 @@ class ThinkingTraceExtractor:
         root = get_root_dir()
         model_name = config.model_name.split('/')[-1]
         dataset_name = config.dataset_name.split('/')[-1]
-        filename = root+config.data_dir + "/" + dataset_name + "/" + model_name 
+        filename = root+config.data_dir + "/" + dataset_name + "-" + model_name 
+        print('Check storage dir : {}'.format(filename))
+        quit()
         os.makedirs(filename, exist_ok=True)
         for l in range(self.num_layers+1):
             os.makedirs(filename + f"/layer_{l}", exist_ok=True)

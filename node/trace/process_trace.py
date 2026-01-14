@@ -21,9 +21,11 @@ def download_layer_traces(root, config):
 def segment_representations(root, config):
 
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-    layer_data_dir = root + "/" + config.trace_dir + "/" + config.dataset_name.split("/")[-1]
-    layer_data_dir += "/" + config.model_name.split("/")[-1]
+    layer_data_dir = root + "/" + config.trace_dir 
+    layer_data_dir += "/" + config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
     layer_data_dir += "/" + "layer_" + str(config.trace_layer)
+    print(layer_data_dir)
+    quit()
 
     # iterate over tensors from all examples
     for rep_file in os.scandir(layer_data_dir):
