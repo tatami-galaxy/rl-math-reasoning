@@ -11,14 +11,14 @@ class Func(eqx.Module):
     out_scale: jax.Array
     mlp: eqx.nn.MLP
 
-    def __init__(self, data_size, config, *, key, **kwargs):
+    def __init__(self, data_size, width_size, depth, *, key, **kwargs):
         super().__init__(**kwargs)
         self.out_scale = jnp.array(1.0)
         self.mlp = eqx.nn.MLP(
             in_size=data_size,
             out_size=data_size,
-            width_size=config.node_width,
-            depth=config.node_depth,
+            width_size=width_size,
+            depth=depth,
             activation=jnn.softplus,
             final_activation=jax.nn.tanh,
             key=key,
@@ -35,7 +35,7 @@ class NeuralODE(eqx.Module):
     atol: float
 
     # * means everything after it must be passed by keyword
-    def __init__(self, data_size, config, *, key, **kwargs):
+    def __init__(self, config, data_size, *, key, **kwargs):
         super().__init__(**kwargs)
         self.func = Func(data_size, config.node_width, config.node_depth, key=key)
         self.rtol = config.pid_rtol

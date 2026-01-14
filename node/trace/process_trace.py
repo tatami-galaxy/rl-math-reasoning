@@ -2,11 +2,15 @@ import os
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
+from safetensors.torch import save_file
 
-import jax.numpy as jnp
+import torch
+
+from tqdm.auto import tqdm
 
 
 def download_layer_traces(root, config):
+    if config.hf_token is None: raise ValueError("Pass in HF token")
     layer_pattern = "layer_"+str(config.trace_layer)+"/*"
     trace_dir = root+config.trace_dir+config.trace_data.split('/')[-1]
     snapshot_download(
@@ -18,18 +22,54 @@ def download_layer_traces(root, config):
     return trace_dir
 
 
+def load_segment_representations(root, config):
+
+    # filename
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    layer_data_dir = root + "/" + config.trace_dir
+    layer_data_dir += "/" if not layer_data_dir.endswith("/") else ""
+    layer_data_dir += "/" + config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
+    layer_data_dir += "/" + "layer_" + str(config.trace_layer)
+    layer_segment_dir = layer_data_dir + "_segments"
+
+    # get seg reps for each example
+    seg_reps = []
+    for rep_file in os.scandir(layer_segment_dir):
+        if not rep_file.name.endswith(".safetensors"): continue
+        with safe_open(layer_segment_dir+"/"+rep_file.name, framework="jax", device="cpu") as f:
+            # TODO : get metadata here
+            metadata = f.metadata()
+            tensors = {k: f.get_tensor(k) for k in f.keys()}
+            seg_reps.append(tensors['layer_trace'])
+            
+    return seg_reps
+    
+
+
+
 def segment_representations(root, config):
 
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-    layer_data_dir = root + "/" + config.trace_dir 
+    layer_data_dir = root + "/" + config.trace_dir
+    layer_data_dir += "/" if not layer_data_dir.endswith("/") else ""
     layer_data_dir += "/" + config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
     layer_data_dir += "/" + "layer_" + str(config.trace_layer)
-    print(layer_data_dir)
-    quit()
 
-    # iterate over tensors from all examples
+    # layer segments directory
+    layer_segment_dir = layer_data_dir + "_segments"
+    if os.path.isdir(layer_segment_dir) and os.listdir(layer_segment_dir) and not config.resegment:
+        print("Segmentation already done.")
+        return
+    else:
+        print("Segmenting...")
+        os.makedirs(layer_segment_dir, exist_ok=True)
+
+    # iterate over tensors from all examples and save segment reps for each example
+    bar = tqdm(range((len(os.listdir(layer_data_dir)))))
     for rep_file in os.scandir(layer_data_dir):
-        with safe_open(layer_data_dir+"/1.safetensors", framework="jax", device="cpu") as f:
+        if not rep_file.name.endswith(".safetensors"): continue
+        with safe_open(layer_data_dir+"/"+rep_file.name, framework="pt", device="cpu") as f:
+
             metadata = f.metadata()
             tensors = {k: f.get_tensor(k) for k in f.keys()}
 
@@ -45,19 +85,39 @@ def segment_representations(root, config):
 
             # find segment boundaries
             seg_posns = [i for i, c in enumerate(metadata['thinking_text']) if c == config.segment_by]
+            # process segment lengths
+            # merge empty segments
+            new_seg_posns = []
+            for i in range(len(seg_posns)-1):
+                if seg_posns[i+1] - seg_posns[i] > 1:
+                    new_seg_posns.append(seg_posns[i])
+            new_seg_posns.append(seg_posns[-1])
+            seg_posns = new_seg_posns
+            if seg_posns[0] == 0: seg_posns = seg_posns[1:]
+
+            # skip example if no segments
+            if len(seg_posns) <= 1: continue
 
             # collect token reps for each segment and average
             segment_reps = []
             current_seg = []
             seg_id = 0
             for token_rep, (start, end) in zip(tensors['layer_trace'], offsets):
-                if seg_id < len(seg_posns) and start >= seg_posns[seg_id] + 1:
-                    avg_seg_rep = jnp.mean(jnp.stack(current_seg), axis=0)
+                if seg_id < len(seg_posns) and start >= seg_posns[seg_id]:
+                    avg_seg_rep = torch.mean(torch.stack(current_seg), dim=0)
                     segment_reps.append(avg_seg_rep)
                     current_seg = []
                     seg_id += 1
                 current_seg.append(token_rep)
 
-            # list of jax arrays
-            # TODO : maybe save
-            return segment_reps 
+            # save segment reps
+            filename = layer_segment_dir + "/" + rep_file.name
+            tensor = {"layer_trace" : torch.stack(segment_reps)}
+            save_file(
+                tensor,
+                filename,
+                metadata=metadata
+            )
+
+        bar.update(1)
+
