@@ -1,6 +1,7 @@
 import sys
 sys.path.append('../../')
 from dataclasses import dataclass, field
+import time
 
 from utils import get_root_dir
 
@@ -64,7 +65,20 @@ def make_step(ti, yi, model, opt_state):
     return loss, model, opt_state
 
 
-def train(config, model, optim):
+def data_sampler(data, *, key):
+    dataset_size = len(data)
+    indices = jnp.arange(dataset_size)
+    while True:
+        perm = jr.permutation(key, indices)
+        (key,) = jr.split(key, 1)
+        index = 0
+        while index < dataset_size:
+            ex_index = perm[index]
+            yield data[ex_index]
+            index += 1
+
+
+def train(config, model, data, optim):
     # Up until step 500 we train on only the first 10% of each time series.
     # This is a standard trick to avoid getting caught in a local minimum.
     for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
@@ -78,12 +92,14 @@ def train(config, model, optim):
         # optimizer state
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
-        # time
-        _ts = ts[: int(length_size * length)]
-        _ys = ys[:, : int(length_size * length)]
-        for step, (yi,) in zip(range(steps), dataloader((_ys,), batch_size, key=loader_key)):
+        #_ts = ts[: int(length_size * length)]
+        #_ys = ys[:, : int(length_size * length)] -> TODO : needed?
+
+        for step, yi in zip(range(steps), data_sampler(data, key=loader_key)):
+            ts = jnp.arrange(yi.shape[0])
             start = time.time()
-            loss, model, opt_state = make_step(_ts, yi, model, opt_state)
+            # TODO : 
+            loss, model, opt_state = make_step(ts, yi, model, opt_state)
             end = time.time()
             if (step % print_every) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
@@ -115,17 +131,18 @@ if __name__ == "__main__":
 
     # get segment representations
     # list of tensors with different lengths
-    seg_reps = load_segment_representations(root, config)
-    data_size = seg_reps[0].shape[1]
+    data = load_segment_representations(root, config)
 
     # TODO : lower data dimensionality
 
     # node and optimizer
-    model = NeuralODE(config, data_size, key=model_key)
+    model = NeuralODE(config, data[0].shape[1], key=model_key)
     optim = optax.adabelief(config.lr)
 
     # train
-    train(config, model, optim)
+    # either integrate per trajectory
+    # or common time stamps, mask invalid time stamps
+    train(config, model, data, optim)
 
 
 
