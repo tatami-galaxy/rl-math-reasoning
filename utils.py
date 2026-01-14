@@ -10,7 +10,7 @@ SYSTEM_PROMPT_THINK = "You are given a math problem. Think carefully before prod
 def get_root_dir():
     root = os.path.abspath('')
     project_name = 'rl-math-reasoning'
-    print("Project name set as {}. Make sure it is correct".format(project_name))
+    print("Project name set as {}".format(project_name))
     while root.split('/')[-1] != project_name:
         root = dirname(root)
     return root

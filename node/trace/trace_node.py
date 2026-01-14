@@ -53,7 +53,10 @@ class TraceHyps:
 
 @eqx.filter_value_and_grad
 def grad_loss(model, ti, yi):
-    y_pred = jax.vmap(model, in_axes=(None, 0))(ti, yi[:, 0])
+    #y_pred = jax.vmap(model, in_axes=(None, 0))(ti, yi[:, 0])
+    # integrate with node from the first time step
+    # then calculate loss at each time step
+    y_pred = model(ti, yi[0])
     return jnp.mean((yi - y_pred) ** 2)
 
 
@@ -96,11 +99,14 @@ def train(config, model, data, optim):
         #_ys = ys[:, : int(length_size * length)] -> TODO : needed?
 
         for step, yi in zip(range(steps), data_sampler(data, key=loader_key)):
-            ts = jnp.arrange(yi.shape[0])
+            # length strategy
+            ts = jnp.arange(int(length_frac * yi.shape[0]))
+            yi = yi[:int(length_frac * yi.shape[0])]
+
             start = time.time()
-            # TODO : 
             loss, model, opt_state = make_step(ts, yi, model, opt_state)
             end = time.time()
+
             if (step % print_every) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
     
@@ -132,6 +138,9 @@ if __name__ == "__main__":
     # get segment representations
     # list of tensors with different lengths
     data = load_segment_representations(root, config)
+    print([d.shape[0] for d in data])
+    quit()
+    # TODO : merge small segments during segmentation
 
     # TODO : lower data dimensionality
 

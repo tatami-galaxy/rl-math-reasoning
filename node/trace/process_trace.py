@@ -58,7 +58,7 @@ def segment_representations(root, config):
     # layer segments directory
     layer_segment_dir = layer_data_dir + "_segments"
     if os.path.isdir(layer_segment_dir) and os.listdir(layer_segment_dir) and not config.resegment:
-        print("Segmentation already done.")
+        print("Segmentation already done")
         return
     else:
         print("Segmenting...")
