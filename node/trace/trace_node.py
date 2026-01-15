@@ -36,6 +36,7 @@ class TraceHyps:
     #trace_dir: str = field(default="/data/traces/")
     trace_dir: str = field(default="/data/Trace-Tensors")
     segment_by: str = field(default="\n")
+    min_segments: int = field(default=5)
     resegment: bool = field(default=False)
 
     # neural ode
@@ -46,6 +47,8 @@ class TraceHyps:
     total_steps: int = field(default=1000)
     step_strategy: list[float] = field(default_factory=lambda: [0.5, 0.5])
     length_strategy: list[float] = field(default_factory=lambda: [0.1, 1])
+    min_trace_length: int = field(default=10) # in num segments
+
 
     # optimizer
     lr: float = field(default=1e-3)
@@ -89,21 +92,22 @@ def train(config, model, data, optim):
         # num steps according to step strategy
         steps = int(config.total_steps * step_frac)
 
-        # TODO : this has to be set per example since examples are of different lengths
-        # FIX : length = int(length_of_this_example * length_frac)
-
         # optimizer state
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
-        #_ts = ts[: int(length_size * length)]
-        #_ys = ys[:, : int(length_size * length)] -> TODO : needed?
-
+        # train loop
         for step, yi in zip(range(steps), data_sampler(data, key=loader_key)):
             # length strategy
-            ts = jnp.arange(int(length_frac * yi.shape[0]))
-            yi = yi[:int(length_frac * yi.shape[0])]
+            # if total length already small do not truncate
+            if int(length_frac * yi.shape[0]) >= config.min_trace_length:
+                ts = jnp.arange(int(length_frac * yi.shape[0]))
+                yi = yi[:int(length_frac * yi.shape[0])]
+            else:
+                ts = jnp.arange(yi.shape[0])
 
+            # train step
             start = time.time()
+            # TODO : 
             loss, model, opt_state = make_step(ts, yi, model, opt_state)
             end = time.time()
 
@@ -137,10 +141,9 @@ if __name__ == "__main__":
 
     # get segment representations
     # list of tensors with different lengths
-    data = load_segment_representations(root, config)
-    print([d.shape[0] for d in data])
-    quit()
-    # TODO : merge small segments during segmentation
+    data, metadata = load_segment_representations(root, config)
+    print('Num examples : {}'.format(len(data)))
+    print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
 
     # TODO : lower data dimensionality
 

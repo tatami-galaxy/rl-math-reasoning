@@ -34,6 +34,7 @@ def load_segment_representations(root, config):
 
     # get seg reps for each example
     seg_reps = []
+    meta = []
     for rep_file in os.scandir(layer_segment_dir):
         if not rep_file.name.endswith(".safetensors"): continue
         with safe_open(layer_segment_dir+"/"+rep_file.name, framework="jax", device="cpu") as f:
@@ -41,8 +42,9 @@ def load_segment_representations(root, config):
             metadata = f.metadata()
             tensors = {k: f.get_tensor(k) for k in f.keys()}
             seg_reps.append(tensors['layer_trace'])
+            meta.append(metadata)
             
-    return seg_reps
+    return seg_reps, meta
     
 
 
@@ -95,8 +97,8 @@ def segment_representations(root, config):
             seg_posns = new_seg_posns
             if seg_posns[0] == 0: seg_posns = seg_posns[1:]
 
-            # skip example if no segments
-            if len(seg_posns) <= 1: continue
+            # skip example if very few segments
+            if len(seg_posns) < (config.min_segments-1): continue
 
             # collect token reps for each segment and average
             segment_reps = []
