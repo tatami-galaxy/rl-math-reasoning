@@ -18,6 +18,9 @@ from node import NeuralODE
 import optax
 
 import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.decomposition import PCA
+from mpl_toolkits.mplot3d import Axes3D
 
 
 @dataclass
@@ -49,9 +52,9 @@ class TraceHyps:
     length_strategy: list[float] = field(default_factory=lambda: [0.1, 1])
     min_trace_length: int = field(default=10) # in num segments
 
-
-    # optimizer
+    # training
     lr: float = field(default=1e-3)
+    log_steps: int = field(default=50)
 
 
 @eqx.filter_value_and_grad
@@ -104,17 +107,14 @@ def train(config, model, data, optim):
                 yi = yi[:int(length_frac * yi.shape[0])]
             else:
                 ts = jnp.arange(yi.shape[0])
-
             # train step
             start = time.time()
-            # TODO : 
             loss, model, opt_state = make_step(ts, yi, model, opt_state)
             end = time.time()
 
-            if (step % print_every) == 0 or step == steps - 1:
+            if (step % config.log_steps) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
     
-
 
 if __name__ == "__main__":
 
@@ -145,7 +145,44 @@ if __name__ == "__main__":
     print('Num examples : {}'.format(len(data)))
     print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
 
+    ###
     # TODO : lower data dimensionality
+    data_all = np.concatenate([np.array(d) for d in data], axis=0)
+    pca = PCA(n_components=2)
+    pca.fit(data_all)
+    compressed_series = [pca.transform(d) for d in data][:3]
+
+    # plot
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    fig = plt.figure(figsize=(9, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    for i, ts in enumerate(compressed_series):
+        #t = np.arange(len(ts))
+        t = np.linspace(0, 1, len(ts))
+        color = colors[i % len(colors)]
+
+        ax.plot(
+            ts[:, 0],      # PCA component 1
+            ts[:, 1],      # PCA component 2
+            t,             # time axis
+            color=color,
+            alpha=0.8
+        )
+
+    ax.set_box_aspect([1, 1, 1])
+    ax.view_init(elev=20, azim=45)
+    ax.set_xlabel("PCA component 1")
+    ax.set_ylabel("PCA component 2")
+    ax.set_zlabel("Time step")
+    ax.set_title("2D PCA trajectories over time (variable length)")
+
+    plt.tight_layout()
+    plt.savefig("pca_2d_trajectories_3d.jpg", dpi=300, bbox_inches="tight")
+    plt.show()
+
+    quit()
+    ###
 
     # node and optimizer
     model = NeuralODE(config, data[0].shape[1], key=model_key)
