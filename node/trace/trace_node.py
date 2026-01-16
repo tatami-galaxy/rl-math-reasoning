@@ -58,17 +58,17 @@ class TraceHyps:
 
 
 @eqx.filter_value_and_grad
-def grad_loss(model, ti, yi):
+def grad_loss(model, ts, ys):
     #y_pred = jax.vmap(model, in_axes=(None, 0))(ti, yi[:, 0])
     # integrate with node from the first time step
     # then calculate loss at each time step
-    y_pred = model(ti, yi[0])
-    return jnp.mean((yi - y_pred) ** 2)
+    y_pred = model(ts, ys[0])
+    return jnp.mean((ys - y_pred) ** 2)
 
 
 @eqx.filter_jit
-def make_step(ti, yi, model, opt_state):
-    loss, grads = grad_loss(model, ti, yi)
+def make_step(ts, ys, model, opt_state):
+    loss, grads = grad_loss(model, ts, ys)
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return loss, model, opt_state
@@ -87,9 +87,46 @@ def data_sampler(data, *, key):
             index += 1
 
 
+def pca_trace(data, num_components=2):
+    data_all = np.concatenate([np.array(d) for d in data], axis=0)
+    pca = PCA(n_components=num_components)
+    pca.fit(data_all)
+    compressed_data = [pca.transform(d) for d in data]
+    return pca, compressed_data
+
+
+def plot_3d(data, pca, compressed_data, model, step, num_plots=2):
+    fig = plt.figure(figsize=(9, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    for i in range(len(compressed_data[:num_plots])):
+        ys = data[i]
+        ys_comp = compressed_data[i]
+        t = np.linspace(0, 1, len(ys_comp))
+        # data
+        ax.plot(ys_comp[:, 0], ys_comp[:, 1], t, color="dodgerblue", alpha=0.8, label="data")
+        # model
+        y_pred_comp = pca.transform(model(jnp.arange(ys.shape[0]), ys[0]))
+        ax.plot(y_pred_comp[:, 0], y_pred_comp[:, 1], t, color="crimson", alpha=0.8, label="model")
+
+    ax.set_box_aspect([1, 1, 1])
+    ax.view_init(elev=20, azim=45)
+    ax.set_xlabel("PCA component 1")
+    ax.set_ylabel("PCA component 2")
+    ax.set_zlabel("Time step")
+    ax.set_title("2D PCA trajectories over time")
+    plt.tight_layout()
+    plt.savefig("pca_2d_trajectories_3d_"+str(step)+".jpg", dpi=300, bbox_inches="tight")
+
+
 def train(config, model, data, optim):
     # Up until step 500 we train on only the first 10% of each time series.
     # This is a standard trick to avoid getting caught in a local minimum.
+
+    # pca for viz
+    pca, compressed_data = pca_trace(data, num_components=2)
+    
+    # training
     for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
 
         # num steps according to step strategy
@@ -99,22 +136,26 @@ def train(config, model, data, optim):
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
         # train loop
-        for step, yi in zip(range(steps), data_sampler(data, key=loader_key)):
+        for step, ys in zip(range(steps), data_sampler(data, key=loader_key)):
+
             # length strategy
             # if total length already small do not truncate
-            if int(length_frac * yi.shape[0]) >= config.min_trace_length:
-                ts = jnp.arange(int(length_frac * yi.shape[0]))
-                yi = yi[:int(length_frac * yi.shape[0])]
+            if int(length_frac * ys.shape[0]) >= config.min_trace_length:
+                ts = jnp.arange(int(length_frac * ys.shape[0]))
+                ys = ys[:int(length_frac * ys.shape[0])]
             else:
-                ts = jnp.arange(yi.shape[0])
+                ts = jnp.arange(ys.shape[0])
+
             # train step
             start = time.time()
-            loss, model, opt_state = make_step(ts, yi, model, opt_state)
+            loss, model, opt_state = make_step(ts, ys, model, opt_state)
             end = time.time()
 
+            # log and plot
             if (step % config.log_steps) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
-    
+                plot_3d(data, pca, compressed_data, model, step)
+                
 
 if __name__ == "__main__":
 
@@ -145,45 +186,8 @@ if __name__ == "__main__":
     print('Num examples : {}'.format(len(data)))
     print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
 
-    ###
-    # TODO : lower data dimensionality
-    data_all = np.concatenate([np.array(d) for d in data], axis=0)
-    pca = PCA(n_components=2)
-    pca.fit(data_all)
-    compressed_series = [pca.transform(d) for d in data][:3]
-
-    # plot
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    fig = plt.figure(figsize=(9, 6))
-    ax = fig.add_subplot(111, projection="3d")
-
-    for i, ts in enumerate(compressed_series):
-        #t = np.arange(len(ts))
-        t = np.linspace(0, 1, len(ts))
-        color = colors[i % len(colors)]
-
-        ax.plot(
-            ts[:, 0],      # PCA component 1
-            ts[:, 1],      # PCA component 2
-            t,             # time axis
-            color=color,
-            alpha=0.8
-        )
-
-    ax.set_box_aspect([1, 1, 1])
-    ax.view_init(elev=20, azim=45)
-    ax.set_xlabel("PCA component 1")
-    ax.set_ylabel("PCA component 2")
-    ax.set_zlabel("Time step")
-    ax.set_title("2D PCA trajectories over time (variable length)")
-
-    plt.tight_layout()
-    plt.savefig("pca_2d_trajectories_3d.jpg", dpi=300, bbox_inches="tight")
-    plt.show()
-
-    quit()
-    ###
-
+    # TODO : lower data dimensionality before training?
+    
     # node and optimizer
     model = NeuralODE(config, data[0].shape[1], key=model_key)
     optim = optax.adabelief(config.lr)
