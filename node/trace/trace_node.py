@@ -38,6 +38,8 @@ class TraceHyps:
     segment_by: str = field(default="\n")
     min_segments: int = field(default=5)
     resegment: bool = field(default=False)
+    proj_before_train: bool = field(default=False)
+    proj_dim: int = field(default=256)
 
     # neural ode
     node_depth: int = field(default=3)
@@ -46,13 +48,14 @@ class TraceHyps:
     pid_atol: float = field(default=1e-6)
 
     # training
-    lr: float = field(default=1e-3)
+    lr: float = field(default=1e-3) # 2e-5
     total_steps: int = field(default=1000)
     step_strategy: list[float] = field(default_factory=lambda: [0.5, 0.5])
     length_strategy: list[float] = field(default_factory=lambda: [0.1, 1])
     min_trace_length: int = field(default=10) # in num segments
     log_steps: int = field(default=50)
     plot: bool = field(default=False)
+    save_after_train: bool = field(default=False)
 
 
 @eqx.filter_value_and_grad
@@ -157,18 +160,20 @@ def train(root, config, model, data, optim, loader_key):
                     plot_3d(data, pca, compressed_data, model, step, num_plots=2)
 
     # save 
-    hyperparams = {
-        "seed": config.seed,
-        "node_width": config.node_width,
-        "node_depth": config.node_depth,
-        "data_size": data[0].shape[1],
-        "pid_rtol": config.pid_rtol,
-        "pid_atol": config.pid_atol,
-    }
-    filename = root + "/models/"
-    filename += config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
-    filename += "-layer-" + str(config.trace_layer) + ".eqx"
-    save_node(filename, hyperparams, model)
+    if config.save_after_train:
+        print("Saving model...")
+        hyperparams = {
+            "seed": config.seed,
+            "node_width": config.node_width,
+            "node_depth": config.node_depth,
+            "data_size": data[0].shape[1],
+            "pid_rtol": config.pid_rtol,
+            "pid_atol": config.pid_atol,
+        }
+        filename = root + "/models/"
+        filename += config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
+        filename += "-layer-" + str(config.trace_layer) + ".eqx"
+        save_node(filename, hyperparams, model)
 
 
 if __name__ == "__main__":
@@ -201,7 +206,10 @@ if __name__ == "__main__":
     print('Num examples : {}'.format(len(data)))
     print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
 
-    # TODO : lower data dimensionality before training?
+    # lower data dimensionality before training
+    if config.proj_before_train:
+        print('PCA before training...')
+        pca, data = pca_trace(data, num_components=config.proj_dim)
     
     # node and optimizer
     model = NeuralODE(
@@ -211,8 +219,9 @@ if __name__ == "__main__":
     optim = optax.adabelief(config.lr)
 
     # train
-    # either integrate per trajectory
+    # either integrate per trajectory -> this is being done now!
     # or common time stamps, mask invalid time stamps
+    # TODO : or latent ode
     train(root, config, model, data, optim, loader_key)
 
 
