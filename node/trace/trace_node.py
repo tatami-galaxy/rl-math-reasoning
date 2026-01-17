@@ -192,7 +192,7 @@ if __name__ == "__main__":
     #trace_dir = download_layer_traces(root, config)
 
     # process data if not already processed
-    # TODO : merge small segments
+    # TODO : merge small segments, other layers, sonar, LCM
     segment_representations(root, config)
 
     # get segment representations
