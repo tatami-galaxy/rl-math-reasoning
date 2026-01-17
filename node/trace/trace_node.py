@@ -192,6 +192,7 @@ if __name__ == "__main__":
     #trace_dir = download_layer_traces(root, config)
 
     # process data if not already processed
+    # TODO : merge small segments
     segment_representations(root, config)
 
     # get segment representations

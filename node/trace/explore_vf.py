@@ -81,12 +81,13 @@ if __name__ == "__main__":
     )
     
     ####
-    x_id = 0
+    x_id = 76
+
     divs = jnp.array([node.vf.div(None, seg_rep, None) for seg_rep in data[x_id]])
     indices = jnp.argsort(divs).tolist()
-    print(metadatas[x_id]['segment_texts'].split("<SEP>")[indices[2]])
+    print(metadatas[x_id]['segment_texts'].split("<SEP>")[indices[0]])
     print('\n\n')
-    print(metadatas[x_id]['segment_texts'].split("<SEP>")[indices[-3]])
+    print(metadatas[x_id]['segment_texts'].split("<SEP>")[indices[-1]])
 
 
 
