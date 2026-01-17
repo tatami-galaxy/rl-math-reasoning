@@ -38,15 +38,12 @@ def load_segment_representations(root, config):
     for rep_file in os.scandir(layer_segment_dir):
         if not rep_file.name.endswith(".safetensors"): continue
         with safe_open(layer_segment_dir+"/"+rep_file.name, framework="jax", device="cpu") as f:
-            # TODO : get metadata here
             metadata = f.metadata()
             tensors = {k: f.get_tensor(k) for k in f.keys()}
             seg_reps.append(tensors['layer_trace'])
             meta.append(metadata)
             
     return seg_reps, meta
-    
-
 
 
 def segment_representations(root, config):
@@ -96,25 +93,33 @@ def segment_representations(root, config):
             new_seg_posns.append(seg_posns[-1])
             seg_posns = new_seg_posns
             if seg_posns[0] == 0: seg_posns = seg_posns[1:]
-
             # skip example if very few segments
-            if len(seg_posns) < (config.min_segments-1): continue
+            if len(seg_posns) < (config.min_segments-1): continue            
 
             # collect token reps for each segment and average
             segment_reps = []
+            segment_texts = []
             current_seg = []
+            current_text = []
             seg_id = 0
             for token_rep, (start, end) in zip(tensors['layer_trace'], offsets):
-                if seg_id < len(seg_posns) and start >= seg_posns[seg_id]:
+                #if seg_id < len(seg_posns) and start >= seg_posns[seg_id]:
+                if start >= seg_posns[seg_id] or end >= len(metadata['thinking_text']):
                     avg_seg_rep = torch.mean(torch.stack(current_seg), dim=0)
                     segment_reps.append(avg_seg_rep)
+                    segment_texts.append("".join(current_text))
+                    # reset
                     current_seg = []
+                    current_text = []
                     seg_id += 1
                 current_seg.append(token_rep)
+                current_text.append(metadata['thinking_text'][start:end])
 
-            # save segment reps
+            # save segment reps and text
+            segment_texts = "<SEP>".join(segment_texts)
+            metadata['segment_texts'] = segment_texts
             filename = layer_segment_dir + "/" + rep_file.name
-            tensor = {"layer_trace" : torch.stack(segment_reps)}
+            tensor = {"layer_trace" : torch.stack(segment_reps),}
             save_file(
                 tensor,
                 filename,

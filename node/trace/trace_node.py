@@ -8,13 +8,10 @@ from utils import get_root_dir
 from transformers import HfArgumentParser
 from process_trace import segment_representations, load_segment_representations
 
-
-import jax
-import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx 
-from node import NeuralODE
+from node import NeuralODE, save_node
 import optax
 
 import matplotlib.pyplot as plt
@@ -47,14 +44,15 @@ class TraceHyps:
     node_width: int = field(default=64)
     pid_rtol: float = field(default=1e-3)
     pid_atol: float = field(default=1e-6)
+
+    # training
+    lr: float = field(default=1e-3)
     total_steps: int = field(default=1000)
     step_strategy: list[float] = field(default_factory=lambda: [0.5, 0.5])
     length_strategy: list[float] = field(default_factory=lambda: [0.1, 1])
     min_trace_length: int = field(default=10) # in num segments
-
-    # training
-    lr: float = field(default=1e-3)
     log_steps: int = field(default=50)
+    plot: bool = field(default=False)
 
 
 @eqx.filter_value_and_grad
@@ -67,7 +65,7 @@ def grad_loss(model, ts, ys):
 
 
 @eqx.filter_jit
-def make_step(ts, ys, model, opt_state):
+def make_step(ts, ys, model, optim, opt_state):
     loss, grads = grad_loss(model, ts, ys)
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
@@ -119,12 +117,13 @@ def plot_3d(data, pca, compressed_data, model, step, num_plots=2):
     plt.savefig("pca_2d_trajectories_3d_"+str(step)+".jpg", dpi=300, bbox_inches="tight")
 
 
-def train(config, model, data, optim):
+def train(root, config, model, data, optim, loader_key):
     # Up until step 500 we train on only the first 10% of each time series.
     # This is a standard trick to avoid getting caught in a local minimum.
 
     # pca for viz
-    pca, compressed_data = pca_trace(data, num_components=2)
+    if config.plot:
+        pca, compressed_data = pca_trace(data, num_components=2)
     
     # training
     for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
@@ -148,14 +147,29 @@ def train(config, model, data, optim):
 
             # train step
             start = time.time()
-            loss, model, opt_state = make_step(ts, ys, model, opt_state)
+            loss, model, opt_state = make_step(ts, ys, model, optim, opt_state)
             end = time.time()
 
             # log and plot
             if (step % config.log_steps) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
-                plot_3d(data, pca, compressed_data, model, step)
-                
+                if config.plot:
+                    plot_3d(data, pca, compressed_data, model, step, num_plots=2)
+
+    # save 
+    hyperparams = {
+        "seed": config.seed,
+        "node_width": config.node_width,
+        "node_depth": config.node_depth,
+        "data_size": data[0].shape[1],
+        "pid_rtol": config.pid_rtol,
+        "pid_atol": config.pid_atol,
+    }
+    filename = root + "/models/"
+    filename += config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
+    filename += "-layer-" + str(config.trace_layer) + ".eqx"
+    save_node(filename, hyperparams, model)
+
 
 if __name__ == "__main__":
 
@@ -182,20 +196,23 @@ if __name__ == "__main__":
 
     # get segment representations
     # list of tensors with different lengths
-    data, metadata = load_segment_representations(root, config)
+    data, metadatas = load_segment_representations(root, config)
     print('Num examples : {}'.format(len(data)))
     print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
 
     # TODO : lower data dimensionality before training?
     
     # node and optimizer
-    model = NeuralODE(config, data[0].shape[1], key=model_key)
+    model = NeuralODE(
+        config.node_width, config.node_depth, data[0].shape[1], 
+        config.pid_rtol, config.pid_atol, key=model_key
+    )
     optim = optax.adabelief(config.lr)
 
     # train
     # either integrate per trajectory
     # or common time stamps, mask invalid time stamps
-    train(config, model, data, optim)
+    train(root, config, model, data, optim, loader_key)
 
 
 
