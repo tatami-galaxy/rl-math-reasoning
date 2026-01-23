@@ -55,6 +55,7 @@ class TraceHyps:
     min_trace_length: int = field(default=10) # in num segments
     log_steps: int = field(default=50)
     plot: bool = field(default=False)
+    plot_steps: int = field(default=100)
     save_after_train: bool = field(default=False)
 
 
@@ -156,7 +157,7 @@ def train(root, config, model, data, optim, loader_key):
             # log and plot
             if (step % config.log_steps) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
-                if config.plot:
+            if config.plot and (step % config.plot_steps) == 0 or step == steps - 1:
                     plot_3d(data, pca, compressed_data, model, step, num_plots=2)
 
     # save 

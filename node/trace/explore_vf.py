@@ -65,7 +65,6 @@ if __name__ == "__main__":
     parser = HfArgumentParser(TraceHyps)
     config = parser.parse_args_into_dataclasses()[0]
     if config.trace_layer is None: raise ValueError("Pass in layer to get trace reps for")
-    print('Warning :  Make sure layer is same as the layer data model was trained on')
 
     # get segment representations
     # list of tensors with different lengths
@@ -81,7 +80,7 @@ if __name__ == "__main__":
     )
     
     ####
-    x_id = 76
+    x_id = 25
 
     divs = jnp.array([node.vf.div(None, seg_rep, None) for seg_rep in data[x_id]])
     indices = jnp.argsort(divs).tolist()
