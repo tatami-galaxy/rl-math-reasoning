@@ -1,0 +1,12 @@
+[project]
+name = "rl-math-reasoning"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fairseq2>=0.4.6",
+    "numpy==1.26",
+    "sonar-space>=0.4.0",
+    "torch==2.6.0",
+]
