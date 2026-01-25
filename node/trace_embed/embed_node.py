@@ -14,7 +14,6 @@ import jax.random as jr
 import equinox as eqx 
 from node import NeuralODE, save_node
 import optax
-quit()
 
 
 @dataclass
@@ -184,7 +183,7 @@ if __name__ == "__main__":
     model_key, loader_key = jr.split(key, 2)
 
     # download trace data
-    trace_dataset = load_dataset(config.dataset_name, config.dataset_split)
+    trace_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
     print(trace_dataset)
     quit()
 
