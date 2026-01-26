@@ -58,3 +58,25 @@ def process_rl_dataset(x):
             {"role": "user", "content": x["problem"]},
         ],
     }
+
+
+# merge all 3 trace columns from deepmath dataset
+# map with batched=True, remove_columns=dataset.column_names, .shufle(seed)
+def combine_deepmath(x):
+    new_examples = {
+        "answer": [],
+        "question": [],
+        "trace": [],
+        "difficulty": [],
+        "topic": [],
+    }
+    # all 3 traces
+    for i, question in enumerate(x["question"]):
+        traces = [x["r1_solution_1"][i], x["r1_solution_2"][i], x["r1_solution_3"][i]]
+        for trace in traces:
+            new_examples["answer"].append(x["final_answer"][i])
+            new_examples["question"].append(question)
+            new_examples["trace"].append(trace)
+            new_examples["difficulty"].append(x["difficulty"][i])
+            new_examples["topic"].append(x["topic"][i])
+    return new_examples
