@@ -1,18 +1,19 @@
 import sys
 sys.path.append('../../')
 from dataclasses import dataclass, field
-from utils import get_root_dir
+from utils import get_root_dir, combine_deepmath
 
 import re
-import time
-import torch
 import numpy as np
+import torch
+import torch.nn.functional as F
+
+import time
 from multiprocessing import shared_memory
 from multiprocessing.connection import Listener
 
 from transformers import HfArgumentParser
 from datasets import load_dataset
-from utils import combine_deepmath
 
 from sonar.inference_pipelines.text import (
     TextToEmbeddingModelPipeline,
@@ -67,7 +68,15 @@ def get_sentences(config, trace):
 # TODO : reconstruct sentences
 # if reconstruction poor, split large senteces until reconstruction acceptable
 def validate_sentences(config, sentences, t2vec_model, vec2text_model):
-    pass
+    og_embed = t2vec_model.predict(sentences, source_lang="eng_Latn")
+    recon_sents = vec2text_model.predict(og_embed, target_lang="eng_Latn", max_seq_len=512)
+    recon_embed = t2vec_model.predict(recon_sents, source_lang="eng_Latn")
+    cos_sim = F.cosine_similarity(og_embed, recon_embed)
+    print(len(sentences))
+    print(len(recon_sents))
+    print(cos_sim.shape)
+    print(cos_sim)
+    quit()
 
 
 
@@ -78,16 +87,6 @@ if __name__ == "__main__":
     # get config
     parser = HfArgumentParser(SonarHyps)
     config = parser.parse_args_into_dataclasses()[0]
-
-    # download deepmath trace data
-    trace_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
-    
-    # format deepmath
-    trace_dataset = trace_dataset.map(
-        combine_deepmath,
-        batched=True,
-        remove_columns=trace_dataset.column_names,
-    ).shuffle(config.seed)
 
     # sonar models
     t2vec_model = TextToEmbeddingModelPipeline(
@@ -103,15 +102,22 @@ if __name__ == "__main__":
         dtype=torch.float16,
     )
 
-    # example
-    trace = trace_dataset[0]['trace']
-    sentences = get_sentences(config, trace)
-    embeddings = t2vec_model.predict(["n²(1 + log n) ≤ C [n³ log n - (n - 1)^3 log n]"], source_lang="eng_Latn")
-    print(embeddings.shape)
-    print('\n\n')
-    reconstructed = vec2text_model.predict(embeddings, target_lang="eng_Latn", max_seq_len=256)
-    print(reconstructed)
-    quit()
+    # download deepmath trace data
+    trace_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
+    
+    # merge deepmath traces
+    trace_dataset = trace_dataset.map(
+        combine_deepmath,
+        batched=True,
+        remove_columns=trace_dataset.column_names,
+    ).shuffle(config.seed)
+
+    # producer loop
+    for example in trace_dataset:
+        # get sentences from traces
+        sentences = get_sentences(config, example['trace'])
+        # quality check
+        sentences = validate_sentences(config, sentences, t2vec_model, vec2text_model)
 
 
 
