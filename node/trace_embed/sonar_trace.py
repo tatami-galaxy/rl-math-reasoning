@@ -76,46 +76,9 @@ def data_sampler(data, *, key):
             index += 1
 
 
-def pca_trace(data, num_components=2):
-    data_all = np.concatenate([np.array(d) for d in data], axis=0)
-    pca = PCA(n_components=num_components)
-    pca.fit(data_all)
-    compressed_data = [pca.transform(d) for d in data]
-    return pca, compressed_data
-
-
-def plot_3d(data, pca, compressed_data, model, step, num_plots=2):
-    fig = plt.figure(figsize=(9, 6))
-    ax = fig.add_subplot(111, projection="3d")
-
-    for i in range(len(compressed_data[:num_plots])):
-        ys = data[i]
-        ys_comp = compressed_data[i]
-        t = np.linspace(0, 1, len(ys_comp))
-        # data
-        ax.plot(ys_comp[:, 0], ys_comp[:, 1], t, color="dodgerblue", alpha=0.8, label="data")
-        # model
-        y_pred_comp = pca.transform(model(jnp.arange(ys.shape[0]), ys[0]))
-        ax.plot(y_pred_comp[:, 0], y_pred_comp[:, 1], t, color="crimson", alpha=0.8, label="model")
-
-    ax.set_box_aspect([1, 1, 1])
-    ax.view_init(elev=20, azim=45)
-    ax.set_xlabel("PCA component 1")
-    ax.set_ylabel("PCA component 2")
-    ax.set_zlabel("Time step")
-    ax.set_title("2D PCA trajectories over time")
-    plt.tight_layout()
-    plt.savefig("pca_2d_trajectories_3d_"+str(step)+".jpg", dpi=300, bbox_inches="tight")
-
-
 def train(root, config, model, data, optim, loader_key):
-    # Up until step 500 we train on only the first 10% of each time series.
-    # This is a standard trick to avoid getting caught in a local minimum.
-
-    # pca for viz
-    if config.plot:
-        pca, compressed_data = pca_trace(data, num_components=2)
-    
+    # initially we train on only the first n% of each time series.
+    # a standard trick to avoid getting caught in a local minimum.
     # training
     for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
 
@@ -191,30 +154,35 @@ if __name__ == "__main__":
     conn = Client(ADDRESS, authkey=AUTHKEY)
     print("Trainer: connected to Sonar")
 
-    # consume sonar embeddings
-    while True:
-        msg = conn.recv()
-        shm = shared_memory.SharedMemory(name=msg["shm_name"])
+    for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
 
-        batch_embeddings_np = []
-        for meta in msg["embeddings"]:
-            embed = np.ndarray(
-                shape=tuple(meta["shape"]),
-                dtype=np.dtype(meta["dtype"]),
-                buffer=shm.buf,
-                offset=meta["offset"],
-            )
+        # num steps according to step strategy
+        steps = int(config.total_steps * step_frac)
 
-            batch_embeddings_np.append(jnp.asarray(embed)) 
+        # optimizer state
+        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
-        print(f"Process B: received sample with {len(arrays)} arrays")
+        # train loop
+        # TODO : loop over what?
+        for step, ys in zip(range(steps), data_sampler(data, key=loader_key)):
+            # receive sonar embeddings
+            msg = conn.recv()
+            shm = shared_memory.SharedMemory(name=msg["shm_name"])
+            batch_embeddings_np = []
+            for meta in msg["embeddings"]:
+                embed = np.ndarray(
+                    shape=tuple(meta["shape"]),
+                    dtype=np.dtype(meta["dtype"]),
+                    buffer=shm.buf,
+                    offset=meta["offset"],
+                )
+                batch_embeddings_np.append(jnp.asarray(embed)) 
 
-        # Simulate processing
-        time.sleep(2)
+            # relieve producer to produce next batch
+            shm.close()
+            conn.send("done")
 
-        # Cleanup
-        shm.close()
-        conn.send("done")
+            # inner train loop
 
 
 

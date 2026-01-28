@@ -26,6 +26,7 @@ def main():
     while True:
 
         np_arrays = generate_sample()
+        print('produced array')
 
         total_bytes = sum(a.nbytes for a in np_arrays)
         shm = shared_memory.SharedMemory(create=True, size=total_bytes)
