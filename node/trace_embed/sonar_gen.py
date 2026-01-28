@@ -172,10 +172,10 @@ if __name__ == "__main__":
             })
             offset += embedding.nbytes
 
-        # Send control message
+        # send control message
         conn.send({
             "shm_name": shm.name,
-            "arrays": metadata,
+            "embeddings": metadata,
         })
 
         print(f"Sonar: sent embedding with {len(metadata)} arrays")

@@ -2,18 +2,24 @@ import sys
 sys.path.append('../')
 sys.path.append('../../')
 from dataclasses import dataclass, field
+
 import time
+from multiprocessing import shared_memory
+from multiprocessing.connection import Client
 
 from utils import get_root_dir
 
 from transformers import HfArgumentParser
-from datasets import load_dataset
 
+import numpy as np
 import jax.numpy as jnp
 import jax.random as jr
 import equinox as eqx 
 from node import NeuralODE, save_node
 import optax
+
+ADDRESS = ("localhost", 9000)
+AUTHKEY = b"secret"
 
 
 @dataclass
@@ -22,16 +28,8 @@ class TraceHyps:
     # seed
     seed: int = 42
 
-    # trace data
-    dataset_name: str = field(default="zwhe99/DeepMath-103K")
-    dataset_split: str = field(default="train")
-    sample: bool = field(default=False)
-    num_samples: int = field(default=500)
-    segment_by: str = field(default="\n")
-    min_segment_chars: str = field(default=50)
-    min_num_segments: int = field(default=10)
-
     # neural ode
+    trace_embed: int = field(default=1024)
     node_depth: int = field(default=3)
     node_width: int = field(default=64)
     pid_rtol: float = field(default=1e-3)
@@ -182,9 +180,44 @@ if __name__ == "__main__":
     key = jr.PRNGKey(config.seed)
     model_key, loader_key = jr.split(key, 2)
 
+    # node and optimizer
+    model = NeuralODE(
+        config.node_width, config.node_depth, config.trace_embed, 
+        config.pid_rtol, config.pid_atol, key=model_key
+    )
+    optim = optax.adabelief(config.lr)
 
-    # process data if not already processed
-    # TODO : consume sonar embeddings
+    # connect to producer
+    conn = Client(ADDRESS, authkey=AUTHKEY)
+    print("Trainer: connected to Sonar")
+
+    # consume sonar embeddings
+    while True:
+        msg = conn.recv()
+        shm = shared_memory.SharedMemory(name=msg["shm_name"])
+
+        batch_embeddings_np = []
+        for meta in msg["embeddings"]:
+            embed = np.ndarray(
+                shape=tuple(meta["shape"]),
+                dtype=np.dtype(meta["dtype"]),
+                buffer=shm.buf,
+                offset=meta["offset"],
+            )
+
+            batch_embeddings_np.append(jnp.asarray(embed)) 
+
+        print(f"Process B: received sample with {len(arrays)} arrays")
+
+        # Simulate processing
+        time.sleep(2)
+
+        # Cleanup
+        shm.close()
+        conn.send("done")
+
+
+
     segment_representations(root, config)
 
     # get segment representations
@@ -192,18 +225,6 @@ if __name__ == "__main__":
     data, metadatas = load_segment_representations(root, config)
     print('Num examples : {}'.format(len(data)))
     print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
-
-    # lower data dimensionality before training
-    if config.proj_before_train:
-        print('PCA before training...')
-        pca, data = pca_trace(data, num_components=config.proj_dim)
-    
-    # node and optimizer
-    model = NeuralODE(
-        config.node_width, config.node_depth, data[0].shape[1], 
-        config.pid_rtol, config.pid_atol, key=model_key
-    )
-    optim = optax.adabelief(config.lr)
 
     # train
     # either integrate per trajectory -> this is being done now!
