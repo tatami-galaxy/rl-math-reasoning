@@ -7,6 +7,7 @@ import re
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
 import time
 from multiprocessing import shared_memory
@@ -20,6 +21,9 @@ from sonar.inference_pipelines.text import (
     EmbeddingToTextModelPipeline,
 )
 
+ADDRESS = ("localhost", 9000)
+AUTHKEY = b"secret"
+
 
 @dataclass
 class SonarHyps:
@@ -32,6 +36,8 @@ class SonarHyps:
     dataset_split: str = field(default="train")
     sample: bool = field(default=False)
     num_samples: int = field(default=500)
+    batch_size: int = field(default=64)
+    segment_by: str = field(default="\n")
     min_sent_chars: str = field(default=15)
     min_num_sents: int = field(default=10)
 
@@ -52,32 +58,36 @@ def merge_small_sentences(config, sentences):
 
 
 # splits trace into sentences
-def get_sentences(config, trace):
+def get_sentences(config, batch):
     # (?<![.?!:]) -> Negative lookbehind: Don't match if preceded by another punctuation mark
     # [.?!:]      -> Character class: Match any one of these four characters
     # (?=\s|$)    -> Positive lookahead: Match only if followed by space or end of string
     pattern = r'(?<![.?!:])[.?!:](?=\s|$)'
-    sentences = re.split(pattern, trace)
-    # clean up whitespace
-    sentences = [s.strip() for s in sentences if s.strip()]
-    # merge small sentences
-    sentences = merge_small_sentences(config, sentences)
-    return sentences
+
+    traces = batch['trace']
+    batch_sentences = []
+    batch_lengths = []
+    for trace in traces:
+        sentences = re.split(pattern, trace)
+        # clean up whitespace
+        sentences = [s.strip() for s in sentences if s.strip()]
+        # merge small sentences
+        sentences = merge_small_sentences(config, sentences)
+        if len(sentences) >= config.min_num_sents:
+            batch_sentences.append(sentences)
+            batch_lengths.append(len(sentences))
+
+    return batch_sentences, batch_lengths
 
 
-# TODO : reconstruct sentences
-# if reconstruction poor, split large senteces until reconstruction acceptable
+# TODO : use recon as an objective in node training
 def validate_sentences(config, sentences, t2vec_model, vec2text_model):
+    print('validate_sentences function is only for testing!')
     og_embed = t2vec_model.predict(sentences, source_lang="eng_Latn")
     recon_sents = vec2text_model.predict(og_embed, target_lang="eng_Latn", max_seq_len=512)
     recon_embed = t2vec_model.predict(recon_sents, source_lang="eng_Latn")
     cos_sim = F.cosine_similarity(og_embed, recon_embed)
-    print(len(sentences))
-    print(len(recon_sents))
-    print(cos_sim.shape)
-    print(cos_sim)
-    quit()
-
+    indices = torch.argsort(cos_sim).tolist()
 
 
 if __name__ == "__main__":
@@ -95,12 +105,13 @@ if __name__ == "__main__":
         device=torch.device("cuda"),
         dtype=torch.float16,
     )
-    vec2text_model = EmbeddingToTextModelPipeline(
+    # dont need decoder atm
+    """vec2text_model = EmbeddingToTextModelPipeline(
         decoder="text_sonar_basic_decoder",
         tokenizer="text_sonar_basic_encoder",
         device=torch.device("cuda"),
         dtype=torch.float16,
-    )
+    )"""
 
     # download deepmath trace data
     trace_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
@@ -112,12 +123,69 @@ if __name__ == "__main__":
         remove_columns=trace_dataset.column_names,
     ).shuffle(config.seed)
 
+    # dataloader
+    dataloader = DataLoader(
+        trace_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+    )
+
+    listener = Listener(ADDRESS, authkey=AUTHKEY)
+    print("Sonar: waiting for trainer")
+    conn = listener.accept()
+    print("Sonar: connected")
+
     # producer loop
-    for example in trace_dataset:
+    for batch in dataloader:
         # get sentences from traces
-        sentences = get_sentences(config, example['trace'])
+        # might return less than batch size since we discard very small traces
+        batch_sentences, batch_lengths = get_sentences(config, batch)
+        if len(batch_sentences) == 0: continue
         # quality check
-        sentences = validate_sentences(config, sentences, t2vec_model, vec2text_model)
+        #validate_sentences(config, batch_sentences[0], t2vec_model, vec2text_model)
+
+        # concat sentences for generating embeddings
+        batch_sentences_flat = [sentence for sentences in batch_sentences for sentence in sentences]
+        # generate sonar embeddings
+        embeddings = t2vec_model.predict(batch_sentences_flat, source_lang="eng_Latn")
+        # split back
+        batch_embeddings = torch.split(embeddings, batch_lengths)
+
+        # convert to numpy
+        batch_embeddings_np = [embedding.cpu().numpy() for embedding in batch_embeddings]
+
+        # producer logic
+        total_bytes = sum(a.nbytes for a in batch_embeddings_np )
+        shm = shared_memory.SharedMemory(create=True, size=total_bytes)
+        metadata = []
+        offset = 0
+
+        # write arrays contiguously
+        for embedding in batch_embeddings_np:
+            buf = np.ndarray(embedding.shape, dtype=embedding.dtype, buffer=shm.buf, offset=offset)
+            buf[:] = embedding
+            metadata.append({
+                "shape": embedding.shape,
+                "dtype": str(embedding.dtype),
+                "offset": offset,
+                "nbytes": embedding.nbytes,
+            })
+            offset += embedding.nbytes
+
+        # Send control message
+        conn.send({
+            "shm_name": shm.name,
+            "arrays": metadata,
+        })
+
+        print(f"Sonar: sent embedding with {len(metadata)} arrays")
+
+        # producer keeps shm alive until consumer is done
+        ack = conn.recv()
+        if ack == "done":
+            shm.close()
+            shm.unlink()
+
 
 
 

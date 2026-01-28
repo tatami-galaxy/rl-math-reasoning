@@ -54,7 +54,7 @@ def main():
 
         print(f"Process A: sent sample with {len(metadata)} arrays")
 
-        # IMPORTANT: producer keeps shm alive until consumer is done
+        # producer keeps shm alive until consumer is done
         ack = conn.recv()
         if ack == "done":
             shm.close()

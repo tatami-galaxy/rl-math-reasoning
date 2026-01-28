@@ -182,13 +182,9 @@ if __name__ == "__main__":
     key = jr.PRNGKey(config.seed)
     model_key, loader_key = jr.split(key, 2)
 
-    # download trace data
-    trace_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
-    print(trace_dataset)
-    quit()
 
     # process data if not already processed
-    # TODO : merge small segments, other layers, sonar, LCM
+    # TODO : consume sonar embeddings
     segment_representations(root, config)
 
     # get segment representations
