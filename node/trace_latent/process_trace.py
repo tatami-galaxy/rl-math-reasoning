@@ -1,10 +1,12 @@
+import sys
+sys.path.append('../')
 import os
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
 from safetensors import safe_open
-from safetensors.torch import save_file
+#from safetensors.torch import save_file
 
-import torch
+#import torch
 
 from tqdm.auto import tqdm
 

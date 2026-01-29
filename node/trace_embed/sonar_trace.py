@@ -40,6 +40,7 @@ class TraceHyps:
     total_steps: int = field(default=1000)
     step_strategy: list[float] = field(default_factory=lambda: [0.5, 0.5])
     length_strategy: list[float] = field(default_factory=lambda: [0.1, 1])
+    min_trace_length: int = field(default=50) # in num sentences
     log_steps: int = field(default=50)
     plot: bool = field(default=False)
     plot_steps: int = field(default=100)
@@ -107,8 +108,6 @@ def train(root, config, model, data, optim, loader_key):
             # log and plot
             if (step % config.log_steps) == 0 or step == steps - 1:
                 print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
-            if config.plot and (step % config.plot_steps) == 0 or step == steps - 1:
-                    plot_3d(data, pca, compressed_data, model, step, num_plots=2)
 
     # save 
     if config.save_after_train:
@@ -140,8 +139,7 @@ if __name__ == "__main__":
     assert sum(config.step_strategy) == 1
 
     # keys
-    key = jr.PRNGKey(config.seed)
-    model_key, loader_key = jr.split(key, 2)
+    model_key = jr.PRNGKey(config.seed)
 
     # node and optimizer
     model = NeuralODE(
@@ -154,6 +152,9 @@ if __name__ == "__main__":
     conn = Client(ADDRESS, authkey=AUTHKEY)
     print("Trainer: connected to Sonar")
 
+    # outer train loop
+    # initially we train on only the first n% of each time series.
+    # a standard trick to avoid getting caught in a local minimum.
     for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
 
         # num steps according to step strategy
@@ -162,13 +163,14 @@ if __name__ == "__main__":
         # optimizer state
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
-        # train loop
-        # TODO : loop over what?
-        for step, ys in zip(range(steps), data_sampler(data, key=loader_key)):
+        # inner train loop
+        step = 0
+        while step < steps:
+
             # receive sonar embeddings
             msg = conn.recv()
             shm = shared_memory.SharedMemory(name=msg["shm_name"])
-            batch_embeddings_np = []
+            batch_embeddings = []
             for meta in msg["embeddings"]:
                 embed = np.ndarray(
                     shape=tuple(meta["shape"]),
@@ -176,13 +178,37 @@ if __name__ == "__main__":
                     buffer=shm.buf,
                     offset=meta["offset"],
                 )
-                batch_embeddings_np.append(jnp.asarray(embed)) 
-
+                batch_embeddings.append(jnp.asarray(embed)) 
+                step += 1
             # relieve producer to produce next batch
             shm.close()
             conn.send("done")
 
-            # inner train loop
+            # train steps for received data
+            # TODO :
+            for embedding in batch_embeddings:
+                print(embedding.shape)
+                ts = jnp.arange(embedding.shape[0])
+                ys = embedding
+                # length strategy
+                # if total length already small do not truncate
+                if int(length_frac * ys.shape[0]) >= config.min_trace_length:
+                    ts = jnp.arange(int(length_frac * ys.shape[0]))
+                    ys = ys[:int(length_frac * ys.shape[0])]
+                else:
+                    ts = jnp.arange(ys.shape[0])
+                print(ts.shape)
+                print(ys.shape)
+                quit()
+                # train step
+                start = time.time()
+                loss, model, opt_state = make_step(ts, ys, model, optim, opt_state)
+                end = time.time()
+
+                # log and plot
+                if (step % config.log_steps) == 0 or step == steps - 1:
+                    print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
+                
 
 
 

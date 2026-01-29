@@ -14,10 +14,10 @@ import equinox as eqx
 from node import NeuralODE, save_node
 import optax
 
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.decomposition import PCA
-from mpl_toolkits.mplot3d import Axes3D
+#from sklearn.decomposition import PCA
+#from mpl_toolkits.mplot3d import Axes3D
 
 
 @dataclass
@@ -205,6 +205,10 @@ if __name__ == "__main__":
     # list of tensors with different lengths
     data, metadatas = load_segment_representations(root, config)
     print('Num examples : {}'.format(len(data)))
+    print(type(data[0]))
+    print(data[0].shape)
+    print(data[1].shape)
+    quit()
     print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
 
     # lower data dimensionality before training

@@ -137,6 +137,8 @@ if __name__ == "__main__":
 
     # producer loop
     for batch in dataloader:
+
+        print("Sonar : generating batch")
         # get sentences from traces
         # might return less than batch size since we discard very small traces
         batch_sentences, batch_lengths = get_sentences(config, batch)
