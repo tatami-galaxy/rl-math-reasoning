@@ -1,3 +1,6 @@
+# TODO : distributed training?
+# TODO : verify correct data received
+
 import sys
 sys.path.append('../')
 sys.path.append('../../')
@@ -6,6 +9,7 @@ from dataclasses import dataclass, field
 import time
 from multiprocessing import shared_memory
 from multiprocessing.connection import Client
+import copy
 
 from utils import get_root_dir
 
@@ -129,16 +133,14 @@ if __name__ == "__main__":
                     buffer=shm.buf,
                     offset=meta["offset"],
                 )
-                batch_embeddings.append(jnp.asarray(embed)) 
+                # copy since we close the connection before using the data
+                batch_embeddings.append(jnp.asarray(copy.deepcopy(embed))) 
                 step += 1
             # relieve producer to produce next batch
             shm.close()
-            conn.send("done") # -> TODO :; debug this
-
-            print('HERE')
+            conn.send("done")
 
             # train steps for received data
-            # TODO :
             for embedding in batch_embeddings:
                 ts = jnp.arange(embedding.shape[0])
                 ys = embedding
@@ -152,15 +154,12 @@ if __name__ == "__main__":
                 # train step
                 start = time.time()
                 loss, model, opt_state = make_step(ts, ys, model, optim, opt_state)
-                print("loss: {}".format(loss))
-                quit()
                 end = time.time()
-
                 # log and plot
                 if (step % config.log_steps) == 0 or step == steps - 1:
                     print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
 
-    # save 
+    # TODO : save 
     if config.save_after_train:
         print("Saving model...")
         hyperparams = {
