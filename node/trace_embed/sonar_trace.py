@@ -77,55 +77,6 @@ def data_sampler(data, *, key):
             index += 1
 
 
-def train(root, config, model, data, optim, loader_key):
-    # initially we train on only the first n% of each time series.
-    # a standard trick to avoid getting caught in a local minimum.
-    # training
-    for step_frac, length_frac in zip(config.step_strategy, config.length_strategy):
-
-        # num steps according to step strategy
-        steps = int(config.total_steps * step_frac)
-
-        # optimizer state
-        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
-
-        # train loop
-        for step, ys in zip(range(steps), data_sampler(data, key=loader_key)):
-
-            # length strategy
-            # if total length already small do not truncate
-            if int(length_frac * ys.shape[0]) >= config.min_trace_length:
-                ts = jnp.arange(int(length_frac * ys.shape[0]))
-                ys = ys[:int(length_frac * ys.shape[0])]
-            else:
-                ts = jnp.arange(ys.shape[0])
-
-            # train step
-            start = time.time()
-            loss, model, opt_state = make_step(ts, ys, model, optim, opt_state)
-            end = time.time()
-
-            # log and plot
-            if (step % config.log_steps) == 0 or step == steps - 1:
-                print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
-
-    # save 
-    if config.save_after_train:
-        print("Saving model...")
-        hyperparams = {
-            "seed": config.seed,
-            "node_width": config.node_width,
-            "node_depth": config.node_depth,
-            "data_size": data[0].shape[1],
-            "pid_rtol": config.pid_rtol,
-            "pid_atol": config.pid_atol,
-        }
-        filename = root + "/models/"
-        filename += config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
-        filename += "-layer-" + str(config.trace_layer) + ".eqx"
-        save_node(filename, hyperparams, model)
-
-
 if __name__ == "__main__":
 
     root = get_root_dir()
@@ -182,12 +133,13 @@ if __name__ == "__main__":
                 step += 1
             # relieve producer to produce next batch
             shm.close()
-            conn.send("done")
+            conn.send("done") # -> TODO :; debug this
+
+            print('HERE')
 
             # train steps for received data
             # TODO :
             for embedding in batch_embeddings:
-                print(embedding.shape)
                 ts = jnp.arange(embedding.shape[0])
                 ys = embedding
                 # length strategy
@@ -197,35 +149,32 @@ if __name__ == "__main__":
                     ys = ys[:int(length_frac * ys.shape[0])]
                 else:
                     ts = jnp.arange(ys.shape[0])
-                print(ts.shape)
-                print(ys.shape)
-                quit()
                 # train step
                 start = time.time()
                 loss, model, opt_state = make_step(ts, ys, model, optim, opt_state)
+                print("loss: {}".format(loss))
+                quit()
                 end = time.time()
 
                 # log and plot
                 if (step % config.log_steps) == 0 or step == steps - 1:
                     print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
-                
 
-
-
-    segment_representations(root, config)
-
-    # get segment representations
-    # list of tensors with different lengths
-    data, metadatas = load_segment_representations(root, config)
-    print('Num examples : {}'.format(len(data)))
-    print('Avg num segments : {}'.format(int(sum([d.shape[0] for d in data])/len(data))))
-
-    # train
-    # either integrate per trajectory -> this is being done now!
-    # or common time stamps, mask invalid time stamps
-    # TODO : or latent ode
-    train(root, config, model, data, optim, loader_key)
-
+    # save 
+    if config.save_after_train:
+        print("Saving model...")
+        hyperparams = {
+            "seed": config.seed,
+            "node_width": config.node_width,
+            "node_depth": config.node_depth,
+            "data_size": data[0].shape[1],
+            "pid_rtol": config.pid_rtol,
+            "pid_atol": config.pid_atol,
+        }
+        filename = root + "/models/"
+        filename += config.dataset_name.split("/")[-1] + "-" + config.model_name.split("/")[-1]
+        filename += "-layer-" + str(config.trace_layer) + ".eqx"
+        save_node(filename, hyperparams, model)
 
 
 
