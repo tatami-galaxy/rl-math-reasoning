@@ -1,7 +1,10 @@
+# TODO : Find a way to train in batches
+
 import sys
 sys.path.append('../../')
 from dataclasses import dataclass, field
 from utils import get_root_dir, combine_deepmath
+import copy
 
 import re
 import numpy as np
@@ -90,6 +93,79 @@ def validate_sentences(config, sentences, t2vec_model, vec2text_model):
     indices = torch.argsort(cos_sim).tolist()
 
 
+def generate_data(config, batch):
+    # get sentences from traces
+    # might return less than batch size since we discard very small traces
+    batch_sentences, batch_lengths = get_sentences(config, batch)
+    if len(batch_sentences) == 0: return None
+    # quality check
+    #validate_sentences(config, batch_sentences[0], t2vec_model, vec2text_model)
+
+    # concat sentences for generating embeddings
+    batch_sentences_flat = [sentence for sentences in batch_sentences for sentence in sentences]
+    # generate sonar embeddings
+    embeddings = t2vec_model.predict(batch_sentences_flat, source_lang="eng_Latn")
+    # split back
+    batch_embeddings = torch.split(embeddings, batch_lengths)
+
+    # convert to numpy
+    batch_embeddings_np = [embedding.cpu().numpy() for embedding in batch_embeddings]
+
+    return batch_embeddings_np
+
+
+def reconstruct(batch_embeddings_np, vec2text_model):
+    batch_embeddings = [torch.from_numpy(embedding) for embedding in batch_embeddings_np]
+    for embeddings in batch_embeddings:
+        reconstructed = vec2text_model.predict(
+            embeddings.to(vec2text_model.device), target_lang="eng_Latn", max_seq_len=512
+        )
+        print(reconstructed)
+        print('\n\n')
+    quit()
+    
+
+def send_batch(batch_embeddings_np, conn):
+    # producer logic
+    total_bytes = sum(a.nbytes for a in batch_embeddings_np )
+    shm = shared_memory.SharedMemory(create=True, size=total_bytes)
+    metadata = []
+    offset = 0
+    # write arrays contiguously
+    for embedding in batch_embeddings_np:
+        buf = np.ndarray(embedding.shape, dtype=embedding.dtype, buffer=shm.buf, offset=offset)
+        buf[:] = embedding
+        metadata.append({
+            "shape": embedding.shape,
+            "dtype": str(embedding.dtype),
+            "offset": offset,
+            "nbytes": embedding.nbytes,
+        })
+        offset += embedding.nbytes
+    # send control message
+    conn.send({
+        "shm_name": shm.name,
+        "embeddings": metadata,
+    })
+    return shm, metadata
+
+
+def receive_batch(conn):
+    msg = conn.recv()
+    shm = shared_memory.SharedMemory(name=msg["shm_name"])
+    batch_embeddings = []
+    for meta in msg["embeddings"]:
+        embed = np.ndarray(
+            shape=tuple(meta["shape"]),
+            dtype=np.dtype(meta["dtype"]),
+            buffer=shm.buf,
+            offset=meta["offset"],
+        )
+        # copy since we close the connection before using the data
+        batch_embeddings.append(copy.deepcopy(embed))
+    return shm, batch_embeddings
+
+
 if __name__ == "__main__":
 
     root = get_root_dir()
@@ -103,15 +179,14 @@ if __name__ == "__main__":
         encoder="text_sonar_basic_encoder",
         tokenizer="text_sonar_basic_encoder",
         device=torch.device("cuda"),
-        dtype=torch.float16,
+        dtype=torch.float, # float16
     )
-    # dont need decoder atm
-    """vec2text_model = EmbeddingToTextModelPipeline(
+    vec2text_model = EmbeddingToTextModelPipeline(
         decoder="text_sonar_basic_decoder",
         tokenizer="text_sonar_basic_encoder",
         device=torch.device("cuda"),
-        dtype=torch.float16,
-    )"""
+        dtype=torch.float, # float16
+    )
 
     # download deepmath trace data
     trace_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
@@ -138,48 +213,13 @@ if __name__ == "__main__":
     # producer loop
     for batch in dataloader:
 
+        # generate data from batch
         print("Sonar : generating batch")
-        # get sentences from traces
-        # might return less than batch size since we discard very small traces
-        batch_sentences, batch_lengths = get_sentences(config, batch)
-        if len(batch_sentences) == 0: continue
-        # quality check
-        #validate_sentences(config, batch_sentences[0], t2vec_model, vec2text_model)
+        batch_embeddings_np = generate_data(config, batch)
+        if batch_embeddings_np is None: continue
 
-        # concat sentences for generating embeddings
-        batch_sentences_flat = [sentence for sentences in batch_sentences for sentence in sentences]
-        # generate sonar embeddings
-        embeddings = t2vec_model.predict(batch_sentences_flat, source_lang="eng_Latn")
-        # split back
-        batch_embeddings = torch.split(embeddings, batch_lengths)
-
-        # convert to numpy
-        batch_embeddings_np = [embedding.cpu().numpy() for embedding in batch_embeddings]
-
-        # producer logic
-        total_bytes = sum(a.nbytes for a in batch_embeddings_np )
-        shm = shared_memory.SharedMemory(create=True, size=total_bytes)
-        metadata = []
-        offset = 0
-
-        # write arrays contiguously
-        for embedding in batch_embeddings_np:
-            buf = np.ndarray(embedding.shape, dtype=embedding.dtype, buffer=shm.buf, offset=offset)
-            buf[:] = embedding
-            metadata.append({
-                "shape": embedding.shape,
-                "dtype": str(embedding.dtype),
-                "offset": offset,
-                "nbytes": embedding.nbytes,
-            })
-            offset += embedding.nbytes
-
-        # send control message
-        conn.send({
-            "shm_name": shm.name,
-            "embeddings": metadata,
-        })
-
+        # send data to trainer
+        shm, metadata = send_batch(batch_embeddings_np, conn)
         print(f"Sonar: sent embedding with {len(metadata)} arrays")
 
         # producer keeps shm alive until consumer is done
@@ -187,15 +227,9 @@ if __name__ == "__main__":
         if ack == "done":
             shm.close()
             shm.unlink()
-
-
-
-
-
-
-
-    
-
-    
-
-    
+        elif ack == "gen":
+            # read data
+            shm, batch_embeddings_np = receive_batch(conn) 
+            print(f"Sonar: received embedding with {len(batch_embeddings_np)} arrays")
+            # reconstruct
+            reconstruct(batch_embeddings_np, vec2text_model)    

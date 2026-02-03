@@ -24,7 +24,7 @@ import optax
 
 ADDRESS = ("localhost", 9000)
 AUTHKEY = b"secret"
-
+Y_PREDS = []
 
 @dataclass
 class TraceHyps:
@@ -46,9 +46,62 @@ class TraceHyps:
     length_strategy: list[float] = field(default_factory=lambda: [0.1, 1])
     min_trace_length: int = field(default=50) # in num sentences
     log_steps: int = field(default=50)
-    plot: bool = field(default=False)
-    plot_steps: int = field(default=100)
+    gen_steps: int = field(default=50)
     save_after_train: bool = field(default=False)
+
+
+def data_sampler(data, *, key):
+    dataset_size = len(data)
+    indices = jnp.arange(dataset_size)
+    while True:
+        perm = jr.permutation(key, indices)
+        (key,) = jr.split(key, 1)
+        index = 0
+        while index < dataset_size:
+            ex_index = perm[index]
+            yield data[ex_index]
+            index += 1
+
+
+def send_batch(batch_embeddings_np, conn):
+    # producer logic
+    total_bytes = sum(a.nbytes for a in batch_embeddings_np )
+    shm = shared_memory.SharedMemory(create=True, size=total_bytes)
+    metadata = []
+    offset = 0
+    # write arrays contiguously
+    for embedding in batch_embeddings_np:
+        buf = np.ndarray(embedding.shape, dtype=embedding.dtype, buffer=shm.buf, offset=offset)
+        buf[:] = embedding
+        metadata.append({
+            "shape": embedding.shape,
+            "dtype": str(embedding.dtype),
+            "offset": offset,
+            "nbytes": embedding.nbytes,
+        })
+        offset += embedding.nbytes
+    # send control message
+    conn.send({
+        "shm_name": shm.name,
+        "embeddings": metadata,
+    })
+    return shm, metadata
+
+
+def receive_batch(conn):
+    msg = conn.recv()
+    shm = shared_memory.SharedMemory(name=msg["shm_name"])
+    batch_embeddings = []
+    for meta in msg["embeddings"]:
+        embed = np.ndarray(
+            shape=tuple(meta["shape"]),
+            dtype=np.dtype(meta["dtype"]),
+            buffer=shm.buf,
+            offset=meta["offset"],
+        )
+        # copy since we close the connection before using the data
+        batch_embeddings.append(copy.deepcopy(embed))
+    return shm, batch_embeddings
 
 
 @eqx.filter_value_and_grad
@@ -66,19 +119,6 @@ def make_step(ts, ys, model, optim, opt_state):
     updates, opt_state = optim.update(grads, opt_state)
     model = eqx.apply_updates(model, updates)
     return loss, model, opt_state
-
-
-def data_sampler(data, *, key):
-    dataset_size = len(data)
-    indices = jnp.arange(dataset_size)
-    while True:
-        perm = jr.permutation(key, indices)
-        (key,) = jr.split(key, 1)
-        index = 0
-        while index < dataset_size:
-            ex_index = perm[index]
-            yield data[ex_index]
-            index += 1
 
 
 if __name__ == "__main__":
@@ -119,26 +159,22 @@ if __name__ == "__main__":
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
         # inner train loop
-        step = 0
+        step = 1
         while step < steps:
-
             # receive sonar embeddings
-            msg = conn.recv()
-            shm = shared_memory.SharedMemory(name=msg["shm_name"])
-            batch_embeddings = []
-            for meta in msg["embeddings"]:
-                embed = np.ndarray(
-                    shape=tuple(meta["shape"]),
-                    dtype=np.dtype(meta["dtype"]),
-                    buffer=shm.buf,
-                    offset=meta["offset"],
-                )
-                # copy since we close the connection before using the data
-                batch_embeddings.append(jnp.asarray(copy.deepcopy(embed))) 
-                step += 1
+            shm, batch_embeddings_np = receive_batch(conn) 
+            # convert to jax
+            batch_embeddings = [jnp.asarray(embedding) for embedding in batch_embeddings_np]
+                
             # relieve producer to produce next batch
-            shm.close()
-            conn.send("done")
+            # or make it wait for embedding
+            if len(Y_PREDS) > 0:
+                conn.send("gen")
+                send_batch(Y_PREDS, conn)
+                Y_PREDS = []
+            else:
+                shm.close()
+                conn.send("done")
 
             # train steps for received data
             for embedding in batch_embeddings:
@@ -151,13 +187,23 @@ if __name__ == "__main__":
                     ys = ys[:int(length_frac * ys.shape[0])]
                 else:
                     ts = jnp.arange(ys.shape[0])
+
                 # train step
                 start = time.time()
                 loss, model, opt_state = make_step(ts, ys, model, optim, opt_state)
                 end = time.time()
-                # log and plot
+
+                # log and gen
                 if (step % config.log_steps) == 0 or step == steps - 1:
                     print(f"Step: {step}, Loss: {loss}, Computation time: {end - start}")
+                if (step % config.gen_steps) == 0 or step == steps - 1:
+                    y_pred = model(ts, ys[0])
+                    # store y_pred to be returned to producer
+                    Y_PREDS.append(np.asarray(y_pred)) #dtype=np.float16))
+
+                # update step
+                step += 1
+                    
 
     # TODO : save 
     if config.save_after_train:
