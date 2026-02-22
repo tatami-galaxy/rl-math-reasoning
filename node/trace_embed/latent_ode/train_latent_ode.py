@@ -43,7 +43,7 @@ class Config:
     beta: float = field(default=1.0)       # KL weight in ELBO
     
     # training
-    n_epochs: int = field(default=50)
+    n_epochs: int = field(default=5)
     lr: float = field(default=1e-3)
     seed: int = field(default=42)
 
@@ -182,6 +182,7 @@ def main():
     train_step = make_train_step(optimizer, config.beta)
 
     # Training loop
+    print("Starting training...")
     for epoch in range(config.n_epochs):
         epoch_loss = 0.0
         n_batches = 0

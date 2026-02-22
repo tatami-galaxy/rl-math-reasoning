@@ -26,7 +26,6 @@ class ODEFunc(eqx.Module):
         return self.mlp(z)
 
 
-# TODO :
 class GRUEncoder(eqx.Module):
     """Projects embeddings, runs a backwards GRU, outputs (mu, log_var) for z0."""
     proj: eqx.nn.Linear
@@ -43,9 +42,10 @@ class GRUEncoder(eqx.Module):
 
     def __call__(self, x: jax.Array, mask: jax.Array) -> tuple[jax.Array, jax.Array]:
         # x: (T, d_embed), mask: (T,) bool
-        h = jax.vmap(self.proj)(x)          # (T, d_proj)
+        h = jax.vmap(self.proj)(x)  # (T, d_proj)
 
-        # Reverse sequence for backwards GRU.
+        # Reverse sequence for backwards GRU : 
+        # Encoder is trying to produce: z₀, the initial latent state at t=0
         # Padding (mask=False) lands at the start of the reversed sequence, so the
         # GRU hidden state is only updated on valid steps.
         h_rev = jnp.flip(h, axis=0)
@@ -101,6 +101,7 @@ class LatentODE(eqx.Module):
         """Encode a single trajectory and sample z0 via reparameterisation."""
         mu, log_var = self.encoder(x, mask)
         # log_var = log(sigma^2), so sigma = exp(0.5 * log_var)
+        # reparameterzation trick -> sample from standard normal
         z0 = mu + jnp.exp(0.5 * log_var) * jax.random.normal(key, mu.shape)
         return z0, mu, log_var
 
@@ -114,6 +115,7 @@ class LatentODE(eqx.Module):
             dt0=ts[1] - ts[0],
             y0=z0,
             saveat=diffrax.SaveAt(ts=ts),
+            # TODO : rtol, atol in config
             stepsize_controller=diffrax.PIDController(rtol=1e-3, atol=1e-5),
         )
         return solution.ys  # (T_max, d_z)
@@ -134,13 +136,17 @@ def elbo_single(
     key: jax.Array,
     beta: float,
 ) -> jax.Array:
+    # sample z
     z0, mu, log_var = model.encode(x, mask, key)
+    # odesolve
     zs = model.solve(z0, ts)        # (T_max, d_z)
     x_hat = model.decode(zs)        # (T_max, d_embed)
 
+    # ELBO recon term
     # MSE reconstruction over valid steps only
     recon = jnp.sum(mask[:, None] * (x_hat - x) ** 2) / jnp.sum(mask)
 
+    # ELBO KL term
     # KL( N(mu, sigma^2) || N(0, I) )
     kl = -0.5 * jnp.sum(1.0 + log_var - mu ** 2 - jnp.exp(log_var))
 
