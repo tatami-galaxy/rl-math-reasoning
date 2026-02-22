@@ -26,6 +26,7 @@ class ODEFunc(eqx.Module):
         return self.mlp(z)
 
 
+# TODO :
 class GRUEncoder(eqx.Module):
     """Projects embeddings, runs a backwards GRU, outputs (mu, log_var) for z0."""
     proj: eqx.nn.Linear
