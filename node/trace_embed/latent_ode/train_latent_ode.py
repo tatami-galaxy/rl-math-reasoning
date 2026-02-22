@@ -128,6 +128,9 @@ def build_dataset(config: Config, embedder: Embedder) -> TraceDataset:
 def make_train_step(optimizer: optax.GradientTransformation, beta: float):
     @eqx.filter_jit
     def train_step(model, opt_state, padded, mask, ts, keys):
+        # automatically splits things into arrays and non-arrays, 
+        # and then differentiates with respect to all arrays in the first argument
+        # value_and_grad(fun, argnums=0 ...)
         loss, grads = eqx.filter_value_and_grad(elbo_batch)(
             model, padded, mask, ts, keys, beta
         )
