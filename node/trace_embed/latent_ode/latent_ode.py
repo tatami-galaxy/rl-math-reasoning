@@ -145,6 +145,8 @@ def elbo_single(
 
     # ELBO recon term
     # MSE reconstruction over valid steps only
+    # Minimizing MSE equivalent to maximizing recon term Eq​[logp(x∣z0​)], 
+    # where p is Gaussian
     recon = jnp.sum(mask[:, None] * (x_hat - x) ** 2) / jnp.sum(mask)
 
     # ELBO KL term
