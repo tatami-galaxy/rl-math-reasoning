@@ -8,6 +8,7 @@ import diffrax
 # Model (JAX / Equinox)
 # ---------------------------------------------------------------------------
 
+# time invariant vector field over latent space z
 class ODEFunc(eqx.Module):
     """Defines dz/dt = f(z, t). A small MLP operating in latent space."""
     mlp: eqx.nn.MLP
