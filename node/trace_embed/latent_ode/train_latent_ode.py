@@ -2,6 +2,8 @@ import sys
 sys.path.append('../../../')
 from utils import get_root_dir
 from dataclasses import dataclass, field
+import os
+import json
 
 
 import numpy as np
@@ -11,7 +13,7 @@ import equinox as eqx
 import optax
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 from datasets import load_dataset
 from transformers import HfArgumentParser
 
@@ -45,6 +47,7 @@ class Config:
     
     # training
     seed: int = field(default=42)
+    test_size: float = field(default=0.1)  # fraction of data held out for evaluation
     train_batch_size: int = field(default=32)
     n_epochs: int = field(default=10)
     log_steps: int = field(default=10)
@@ -147,6 +150,37 @@ def make_train_step(optimizer: optax.GradientTransformation, beta: float):
 
 
 # ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+
+@eqx.filter_jit
+def eval_batch(model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array) -> jax.Array:
+    """Reconstruction MSE on a batch using deterministic z0=mu (no sampling)."""
+    def single(x, m):
+        # Use mu directly — deterministic evaluation, no stochastic sampling
+        mu, _ = model.encoder(x, m)
+        zs = model.solve(mu, ts)
+        x_hat = model.decode(zs)
+        return jnp.sum(m[:, None] * (x_hat - x) ** 2) / jnp.sum(m)
+
+    return jnp.mean(jax.vmap(single)(padded, mask))
+
+
+def evaluate(model: LatentODE, loader: DataLoader) -> float:
+    total_mse, n_batches = 0.0, 0
+    for padded, mask, _, ts in loader:
+        mse = eval_batch(
+            model,
+            jnp.array(padded.numpy()),
+            jnp.array(mask.numpy()),
+            jnp.array(ts.numpy()),
+        )
+        total_mse += float(mse)
+        n_batches += 1
+    return total_mse / n_batches
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -170,12 +204,27 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    # Dataset + DataLoader
+    # Dataset — split into train / test
     dataset = build_dataset(config, embedder)
-    loader = DataLoader(
+    n_test = max(1, int(len(dataset) * config.test_size))
+    n_train = len(dataset) - n_test
+    train_dataset, test_dataset = random_split(
         dataset,
+        [n_train, n_test],
+        generator=torch.Generator().manual_seed(config.seed),
+    )
+    print(f"Train: {n_train} traces  |  Test: {n_test} traces")
+
+    loader = DataLoader(
+        train_dataset,
         batch_size=config.train_batch_size,
         shuffle=True,
+        collate_fn=collate_fn,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=config.train_batch_size,
+        shuffle=False,
         collate_fn=collate_fn,
     )
 
@@ -215,15 +264,32 @@ def main():
             n_batches += 1
 
             if global_step % config.log_steps == 0:
-                writer.add_scalar("loss/step", batch_loss, global_step)
-                global_step += 1
+                # log to tensorboard
+                writer.add_scalar("loss/batch", batch_loss, global_step)
+
+            global_step += 1
 
         epoch_avg_loss = epoch_loss / n_batches
         # log to tensorboard
         writer.add_scalar("loss/epoch", epoch_avg_loss, epoch)
         print(f"Epoch {epoch + 1}/{config.n_epochs}  loss={epoch_avg_loss:.4f}")
 
+    # Evaluation on test set
+    print("Evaluating on test set...")
+    test_mse = evaluate(model, test_loader)
+    writer.add_scalar("mse/test", test_mse, config.n_epochs)
+    print(f"Test MSE: {test_mse:.6f}")
+
     writer.close()
+
+    # Save model and config
+    os.makedirs(output_dir, exist_ok=True)
+    eqx.tree_serialise_leaves(os.path.join(output_dir, "model.eqx"), model)
+    config_dict = vars(config)
+    config_dict["d_embed"] = d_embed
+    with open(os.path.join(output_dir, "config.json"), "w") as f:
+        json.dump(config_dict, f, indent=2)
+    print(f"Model saved to {output_dir}")
 
 
 if __name__ == "__main__":
