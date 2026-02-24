@@ -1,7 +1,8 @@
 import sys
 sys.path.append('../../../')
-
+from utils import get_root_dir
 from dataclasses import dataclass, field
+
 
 import numpy as np
 import jax
@@ -9,6 +10,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import optax
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 from transformers import HfArgumentParser
@@ -32,7 +34,6 @@ class Config:
     device: str = field(default="cuda")
     min_segments: int = field(default=10)
     embed_batch_size: int = field(default=256)
-    train_batch_size: int = field(default=32)
     segment_by: str = field(default="\n\n")
 
     # model
@@ -43,9 +44,11 @@ class Config:
     beta: float = field(default=1.0)       # KL weight in ELBO
     
     # training
-    n_epochs: int = field(default=5)
-    lr: float = field(default=1e-3)
     seed: int = field(default=42)
+    train_batch_size: int = field(default=32)
+    n_epochs: int = field(default=10)
+    log_steps: int = field(default=10)
+    lr: float = field(default=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +154,12 @@ def main():
     parser = HfArgumentParser(Config)
     config = parser.parse_args_into_dataclasses()[0]
 
+    # get root dir
+    root = get_root_dir()
+    # output dir
+    output_dir = root + "/models/ode/" + config.dataset_name.split("/")[-1]
+    print(f"Output dir: {output_dir}")
+
     # Embedder
     if config.embed_type == "sentence-transformers":
         embedder = SentenceTransformerEmbedder(
@@ -182,6 +191,8 @@ def main():
     train_step = make_train_step(optimizer, config.beta)
 
     # Training loop
+    writer = SummaryWriter(log_dir=output_dir)
+    global_step = 1
     print("Starting training...")
     for epoch in range(config.n_epochs):
         epoch_loss = 0.0
@@ -199,10 +210,20 @@ def main():
             model, opt_state, loss = train_step(
                 model, opt_state, padded_jax, mask_jax, ts_jax, keys
             )
-            epoch_loss += float(loss)
+            batch_loss = float(loss)
+            epoch_loss += batch_loss
             n_batches += 1
 
-        print(f"Epoch {epoch + 1}/{config.n_epochs}  loss={epoch_loss / n_batches:.4f}")
+            if global_step % config.log_steps == 0:
+                writer.add_scalar("loss/step", batch_loss, global_step)
+                global_step += 1
+
+        epoch_avg_loss = epoch_loss / n_batches
+        # log to tensorboard
+        writer.add_scalar("loss/epoch", epoch_avg_loss, epoch)
+        print(f"Epoch {epoch + 1}/{config.n_epochs}  loss={epoch_avg_loss:.4f}")
+
+    writer.close()
 
 
 if __name__ == "__main__":

@@ -13,4 +13,4 @@ python process_deepmath_traces.py --hf_key
 Train latent ode : 
 
 ```
-CUDA_VISIBLE_DEVICES=0 python train_latent_ode.py
+CUDA_VISIBLE_DEVICES=0 python train_latent_ode.py --dataset_name Ujan/deepmath_trace_2
