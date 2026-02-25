@@ -47,7 +47,7 @@ class Config:
     
     # training
     seed: int = field(default=42)
-    test_size: float = field(default=0.1)  # fraction of data held out for evaluation
+    test_size: float = field(default=0.1) 
     train_batch_size: int = field(default=32)
     n_epochs: int = field(default=10)
     log_steps: int = field(default=10)
