@@ -1,5 +1,12 @@
 Make sure jax, torch compiled with cuda 12
 
+and/or maybe
+
+```
+export JAX_CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1  # PyTorch for SONAR on GPU 1
+```
+
 ```
 conda activate jax
 ```
