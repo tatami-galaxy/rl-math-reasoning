@@ -1,0 +1,94 @@
+config:
+  dataset: Ujan/deepmath_trace_5
+  split: train
+  num_traces: 20
+  seg_delimiter: '''\n\n'''
+  compare_mode: semantic
+  batch_size: 64
+  max_seq_len: 512
+  seed: 42
+  sim_threshold: 0.8
+  st_model: sentence-transformers/all-MiniLM-L6-v2
+summary:
+  total_segments: 1818
+  successes: 1208
+  success_pct: 66.4
+  failures: 610
+  failure_pct: 33.6
+per_trace_failure_fraction:
+  mean: 0.377
+  median: 0.337
+  min: 0.097
+  max: 0.873
+segment_length_chars:
+  successes:
+    n: 1208
+    mean: 94.6
+    median: 57.0
+  failures:
+    n: 610
+    mean: 289.7
+    median: 246.5
+scores:
+  mean: 0.809
+  median: 0.892
+  min: -0.006
+  max: 1.0
+examples:
+  successes:
+  - original: 'Wait, let me cross-verify using the differential approach. We had:'
+    decoded: 'Wait, let me cross-verify using the differential approach. We had:'
+    similarity: 1.0
+  - original: So, for this to hold for all n ≥n₀, we need (3C -1) log n ≥1.
+    decoded: So, for this to hold for all n ≥0n, we need (3C- 1) log n ≥1.
+    similarity: 0.955
+  - original: 'Wait, in the inequality after dividing by n², we have:'
+    decoded: 'Wait, in the inequality after dividing by n2, we have:'
+    similarity: 0.919
+  - original: Similarly for t=-1/2, same result. So minimal value is 1. Which matches the result from Lagrange multipliers.
+      So this method also gives 1.
+    decoded: Similarly for t=−1/2, the same result. So the minimum value is 1. which corresponds to the result of Lagrange
+      multipliers. this method also yields 1.
+    similarity: 0.948
+  - original: = (k + a)/2.
+    decoded: = (k + a)/2.
+    similarity: 1.0
+  failures:
+  - original: Now, what about negative x? Since both sin(x) and x² are odd and even functions respectively. So sin(-x) = -sin(x),
+      and (-x)² = x². Therefore, the equation sin(x)=x² for negative x becomes -sin(x) = x². But x² is positive (except at
+      x=0), and -sin(x) would be positive when sin(x) is negative, which is when x is negative. So for negative x, sin(x)
+      is negative, but x² is positive. Therefore, sin(x)=x² would require a negative number to equal a positive number, which
+      is impossible except at x=0.
+    decoded: So what about negative x? since sin2 and sin2 are both equal and odd, so sin-sin- (x) = sin- (x) = sin2 and sin-
+      (x) = sin- (x) = sin2 so sin2's equation for sin2 (x) is negative x. but if sin2 (x) is positive, then sin2 (x) is negative
+      x. but if sin2 (x) is negative x, then sin2 (x) is positive x. so sin sin sin sin sin sin sin sin sin sin sin sin sin
+      sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin
+      sin sin sin sin sin sin sin s
+    similarity: 0.578
+  - original: Then B¹⁶ = (B⁸)² = (A B A³)² = A B A³ * A B A³ = A B (A³ * A) B A³ = A B (A⁴) B A³ = A B I B A³ = A B² A³.
+    decoded: 'Then B16 = (B8) = (B2A3) = A B3 = (A B 3) = A B3 = (A B A) = (A B) B3 = (A B A) B B3 = (A B B B B B B B B B
+      B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B
+      B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B B C B B B C
+      B C B C B B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B C B
+      C B C B C B C B C B C B C B C B C B C B C B '
+    similarity: 0.407
+  - original: 'Wait, but let me verify this. The norm of the functional Q is the supremum of |Q(g)| over all continuous functions
+      g with sup norm ||g|| ≤ 1. So ||Q|| = sup{ |g(2) - g(-2) + 3g(0)| : g ∈ C[-2,2], ||g|| ≤ 1 }.'
+    decoded: Wait, but let me verify this. The norm of the function q is the supremacy of g = 2 with all continuous functions
+      of g above the standard constant so sup = q. g = 2 -g + 2 -g + 3 -g = 0.
+    similarity: 0.785
+  - original: But the problem statement says \(\lim_{n \to \infty} a_n = \alpha \neq 0\) and \(\lim_{n \to \infty} b_n = \beta\).
+      It doesn't specify that \(a_n\) must be positive or that \(b_n\) must be an integer. Therefore, in cases where \(\alpha
+      < 0\) and \(\beta\) is not an integer, the expression \(a_n^{b_n}\) may not be defined for real numbers, hence the limit
+      doesn't exist in the real numbers. However, if we consider complex numbers, then even negative bases raised to real
+      exponents can be defined, b
+    decoded: However, the statement "problem" specifies an integer α0n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\
+    similarity: 0.136
+  - original: But in our case, the integral is \(\int_{C} (x dy - y dx)\), which is the same as the left-hand side of Green's
+      theorem here, so it equals 2 times the area of D. The area enclosed by the circle of radius 2 is π(2)^2 = 4π. Therefore,
+      the integral is 2 * 4π = 8π. Therefore, the imaginary part is 8π. Therefore, putting it all together, the original integral
+      is 0 + i * 8π = 8πi. So that's the same answer as before.
+    decoded: But in our case, the integral is √ (x) -t (x) -d (x), which is equal to the left side of Green's theorem, so
+      it is equal to 2 times the area surrounding D. The area enclosed by the radius of the circle is 2π = 2π = 4π. So the
+      integral is 2π = 4π = 8π, so the imaginary part is 2π = 8π.
+    similarity: 0.715

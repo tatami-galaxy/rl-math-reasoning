@@ -24,7 +24,7 @@ from sonar.inference_pipelines.text import (
 from sentence_transformers import SentenceTransformer
 
 # --- Config ---
-DATASET_NAME = "Ujan/deepmath_trace_5"
+DATASET_NAME = "Ujan/deepmath_trace_2"
 DATASET_SPLIT = "train"
 NUM_TRACES = 20       # number of traces to analyse
 BATCH_SIZE = 64       # SONAR batch size for encode/decode
@@ -37,7 +37,7 @@ DTYPE = torch.float16
 # Comparison mode: "exact", "semantic", or "perplexity"
 COMPARE_MODE = "semantic"
 # Semantic similarity threshold (segments below this are "failures")
-SIM_THRESHOLD = 0.8
+SIM_THRESHOLD = 0.75
 PPL_THRESHOLD = 300.0
 # Sentence-transformer model for semantic comparison
 ST_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
