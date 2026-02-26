@@ -153,7 +153,8 @@ def elbo_single(
     # KL( N(mu, sigma^2) || N(0, I) )
     kl = -0.5 * jnp.sum(1.0 + log_var - mu ** 2 - jnp.exp(log_var))
 
-    return recon + beta * kl
+    weighted_kl = beta * kl
+    return recon + weighted_kl, recon, weighted_kl
 
 
 def elbo_batch(
@@ -163,9 +164,9 @@ def elbo_batch(
     ts: jax.Array,      # (T_max,) float
     keys: jax.Array,    # (B, 2) PRNGKeys
     beta: float,
-) -> jax.Array:
+) -> tuple[jax.Array, jax.Array, jax.Array]:
     def single(x, m, key):
         return elbo_single(model, x, m, ts, key, beta)
 
-    per_sample = jax.vmap(single)(padded, mask, keys)
-    return jnp.mean(per_sample)
+    per_sample_loss, per_sample_recon, per_sample_kl = jax.vmap(single)(padded, mask, keys)
+    return jnp.mean(per_sample_loss), jnp.mean(per_sample_recon), jnp.mean(per_sample_kl)

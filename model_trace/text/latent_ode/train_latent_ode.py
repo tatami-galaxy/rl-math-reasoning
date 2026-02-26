@@ -135,17 +135,17 @@ def build_dataset(config: Config, embedder: Embedder) -> TraceDataset:
 def make_train_step(optimizer: optax.GradientTransformation, beta: float):
     @eqx.filter_jit
     def train_step(model, opt_state, padded, mask, ts, keys):
-        # automatically splits things into arrays and non-arrays, 
-        # and then differentiates with respect to all arrays in the first argument
-        # value_and_grad(fun, argnums=0 ...)
-        loss, grads = eqx.filter_value_and_grad(elbo_batch)(
-            model, padded, mask, ts, keys, beta
-        )
+        # has_aux=True: elbo_batch returns (loss, (recon, kl))
+        # grads are computed w.r.t. the first return value (loss) only
+        (loss, (recon, kl)), grads = eqx.filter_value_and_grad(
+            lambda m, *a: (lambda r: (r[0], (r[1], r[2])))(elbo_batch(m, *a)),
+            has_aux=True,
+        )(model, padded, mask, ts, keys, beta)
         updates, new_opt_state = optimizer.update(
             grads, opt_state, eqx.filter(model, eqx.is_array)
         )
         model = eqx.apply_updates(model, updates)
-        return model, new_opt_state, loss
+        return model, new_opt_state, loss, recon, kl
 
     return train_step
 
@@ -309,7 +309,7 @@ def main():
     global_step = 1
     print("Starting training...")
     for epoch in range(config.n_epochs):
-        epoch_loss = 0.0
+        epoch_loss, epoch_recon, epoch_kl = 0.0, 0.0, 0.0
         n_batches = 0
 
         for padded, mask, _, ts in loader:
@@ -321,23 +321,34 @@ def main():
             mask_jax = jnp.array(mask.numpy())
             ts_jax = jnp.array(ts.numpy())
 
-            model, opt_state, loss = train_step(
+            model, opt_state, loss, recon, kl = train_step(
                 model, opt_state, padded_jax, mask_jax, ts_jax, keys
             )
             batch_loss = float(loss)
+            batch_recon = float(recon)
+            batch_kl = float(kl)
             epoch_loss += batch_loss
+            epoch_recon += batch_recon
+            epoch_kl += batch_kl
             n_batches += 1
 
             if global_step % config.log_steps == 0:
-                # log to tensorboard
                 writer.add_scalar("loss/batch", batch_loss, global_step)
+                writer.add_scalar("loss/recon_batch", batch_recon, global_step)
+                writer.add_scalar("loss/kl_batch", batch_kl, global_step)
 
             global_step += 1
 
         epoch_avg_loss = epoch_loss / n_batches
-        # log to tensorboard
+        epoch_avg_recon = epoch_recon / n_batches
+        epoch_avg_kl = epoch_kl / n_batches
         writer.add_scalar("loss/epoch", epoch_avg_loss, epoch)
-        print(f"Epoch {epoch + 1}/{config.n_epochs}  loss={epoch_avg_loss:.4f}")
+        writer.add_scalar("loss/recon_epoch", epoch_avg_recon, epoch)
+        writer.add_scalar("loss/kl_epoch", epoch_avg_kl, epoch)
+        print(
+            f"Epoch {epoch + 1}/{config.n_epochs}  "
+            f"loss={epoch_avg_loss:.4f}  recon={epoch_avg_recon:.4f}  kl={epoch_avg_kl:.4f}"
+        )
 
     # Evaluation on test set
     print("Evaluating on test set...")

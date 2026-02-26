@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, random_split
 from transformers import HfArgumentParser
 
 from embed import SonarEmbedder
-from train_latent_ode import TraceDataset, collate_fn, split_trace, build_dataset
+from train_latent_ode import collate_fn, build_dataset
 from neural_ode import NeuralODE, mse_batch
 
 
@@ -31,8 +31,6 @@ class Config:
     # data
     dataset_name: str = field(default="Ujan/deepmath_trace_2")
     dataset_split: str = field(default="train")
-    embed_type: str = field(default="sonar")
-    embed_model: str = field(default="sonar")
     device: str = field(default="cuda")
     min_segments: int = field(default=10)
     embed_batch_size: int = field(default=256)
