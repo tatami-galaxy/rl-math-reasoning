@@ -32,11 +32,11 @@ DTYPE = torch.float16
 COMPARE_MODE = "perplexity"
 # Semantic similarity threshold (segments below this are "failures")
 SIM_THRESHOLD = 0.8
-PPL_THRESHOLD = 100.0
+PPL_THRESHOLD = 300.0
 # Sentence-transformer model for semantic comparison
 ST_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # Perplexity model and threshold (segments above this are "failures")
-PPL_MODEL = "Qwen/Qwen3-0.6B"
+PPL_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
 random.seed(SEED)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
