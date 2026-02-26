@@ -182,6 +182,38 @@ def evaluate(model: LatentODE, loader: DataLoader) -> float:
 
 
 @eqx.filter_jit
+def eval_batch_sampled(
+    model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array, keys: jax.Array
+) -> jax.Array:
+    """Reconstruction MSE on a batch using sampled z0 (with reparameterization)."""
+    def single(x, m, key):
+        z0, _, _ = model.encode(x, m, key)
+        zs = model.solve(z0, ts)
+        x_hat = model.decode(zs)
+        return jnp.sum(m[:, None] * (x_hat - x) ** 2) / jnp.sum(m)
+
+    return jnp.mean(jax.vmap(single)(padded, mask, keys))
+
+
+def evaluate_sampled(model: LatentODE, loader: DataLoader, rng_key: jax.Array) -> float:
+    total_mse, n_batches = 0.0, 0
+    for padded, mask, _, ts in loader:
+        rng_key, subkey = jax.random.split(rng_key)
+        B = padded.shape[0]
+        keys = jax.random.split(subkey, B)
+        mse = eval_batch_sampled(
+            model,
+            jnp.array(padded.numpy()),
+            jnp.array(mask.numpy()),
+            jnp.array(ts.numpy()),
+            keys,
+        )
+        total_mse += float(mse)
+        n_batches += 1
+    return total_mse / n_batches
+
+
+@eqx.filter_jit
 def reconstruct_batch(model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array):
     """Reconstruct embeddings through the ODE (deterministic, z0=mu).
 
@@ -353,8 +385,11 @@ def main():
     # Evaluation on test set
     print("Evaluating on test set...")
     test_mse = evaluate(model, test_loader)
-    writer.add_scalar("mse/test", test_mse, config.n_epochs)
-    print(f"Test MSE: {test_mse:.6f}")
+    test_mse_sampled = evaluate_sampled(model, test_loader, key)
+    writer.add_scalar("mse/test_deterministic", test_mse, config.n_epochs)
+    writer.add_scalar("mse/test_sampled", test_mse_sampled, config.n_epochs)
+    print(f"Test MSE (deterministic, z0=mu): {test_mse:.6f}")
+    print(f"Test MSE (sampled, z0~q):        {test_mse_sampled:.6f}")
 
     # Decode examples with SONAR
     if config.embed_type == "sonar" and config.n_decode_examples > 0:
