@@ -6,10 +6,16 @@ and decodes with SONAR, then reports per-trace reconstruction failure rates,
 segment length statistics, and example segments for success and failure cases.
 """
 
+import sys
+sys.path.append('../../')
+from utils import get_root_dir
+import os
 import random
+from datetime import datetime
 
 import numpy as np
 import torch
+import yaml
 from datasets import load_dataset
 from sonar.inference_pipelines.text import (
     TextToEmbeddingModelPipeline,
@@ -18,7 +24,7 @@ from sonar.inference_pipelines.text import (
 from sentence_transformers import SentenceTransformer
 
 # --- Config ---
-DATASET_NAME = "Ujan/deepmath_trace_7"
+DATASET_NAME = "Ujan/deepmath_trace_5"
 DATASET_SPLIT = "train"
 NUM_TRACES = 20       # number of traces to analyse
 BATCH_SIZE = 64       # SONAR batch size for encode/decode
@@ -29,7 +35,7 @@ SEED = 42
 DTYPE = torch.float16
 
 # Comparison mode: "exact", "semantic", or "perplexity"
-COMPARE_MODE = "perplexity"
+COMPARE_MODE = "semantic"
 # Semantic similarity threshold (segments below this are "failures")
 SIM_THRESHOLD = 0.8
 PPL_THRESHOLD = 300.0
@@ -38,6 +44,11 @@ ST_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # Perplexity model and threshold (segments above this are "failures")
 PPL_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 
+# dir
+ROOT = get_root_dir()
+REPORT_DIR = ROOT + "/reports/sonar_expts"
+
+# seed, device
 random.seed(SEED)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -280,6 +291,122 @@ def main():
 
     show_examples(success_idx, "SUCCESS")
     show_examples(fail_idx,    "FAILURE")
+
+    # ------------------------------------------------------------------ #
+    # Save report
+    # ------------------------------------------------------------------ #
+    save_report(
+        flat_segs, flat_decoded, scores, success,
+        per_trace_fail, success_lens, fail_lens,
+        success_idx, fail_idx,
+    )
+
+
+def save_report(
+    flat_segs, flat_decoded, scores, success,
+    per_trace_fail, success_lens, fail_lens,
+    success_idx, fail_idx,
+):
+    os.makedirs(REPORT_DIR, exist_ok=True)
+
+    # Dataset tag for filename, e.g. "deepmath_trace_7"
+    ds_tag = DATASET_NAME.split("/")[-1]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{ds_tag}_{COMPARE_MODE}_{timestamp}.yaml"
+    path = os.path.join(REPORT_DIR, filename)
+
+    n_total = len(flat_segs)
+    n_success = sum(success)
+    n_fail = n_total - n_success
+
+    report: dict = {
+        "config": {
+            "dataset": DATASET_NAME,
+            "split": DATASET_SPLIT,
+            "num_traces": NUM_TRACES,
+            "seg_delimiter": repr(SEG_DELIMITER),
+            "compare_mode": COMPARE_MODE,
+            "batch_size": BATCH_SIZE,
+            "max_seq_len": MAX_SEQ_LEN,
+            "seed": SEED,
+        },
+        "summary": {
+            "total_segments": n_total,
+            "successes": n_success,
+            "success_pct": round(100 * n_success / n_total, 1),
+            "failures": n_fail,
+            "failure_pct": round(100 * n_fail / n_total, 1),
+        },
+        "per_trace_failure_fraction": {
+            "mean": round(float(np.mean(per_trace_fail)), 3),
+            "median": round(float(np.median(per_trace_fail)), 3),
+            "min": round(float(np.min(per_trace_fail)), 3),
+            "max": round(float(np.max(per_trace_fail)), 3),
+        },
+        "segment_length_chars": {},
+    }
+
+    if success_lens:
+        report["segment_length_chars"]["successes"] = {
+            "n": len(success_lens),
+            "mean": round(float(np.mean(success_lens)), 1),
+            "median": round(float(np.median(success_lens)), 1),
+        }
+    if fail_lens:
+        report["segment_length_chars"]["failures"] = {
+            "n": len(fail_lens),
+            "mean": round(float(np.mean(fail_lens)), 1),
+            "median": round(float(np.median(fail_lens)), 1),
+        }
+
+    # Mode-specific fields
+    if COMPARE_MODE == "semantic":
+        report["config"]["sim_threshold"] = SIM_THRESHOLD
+        report["config"]["st_model"] = ST_MODEL
+        report["scores"] = {
+            "mean": round(float(np.mean(scores)), 3),
+            "median": round(float(np.median(scores)), 3),
+            "min": round(float(np.min(scores)), 3),
+            "max": round(float(np.max(scores)), 3),
+        }
+    elif COMPARE_MODE == "perplexity":
+        report["config"]["ppl_threshold"] = PPL_THRESHOLD
+        report["config"]["ppl_model"] = PPL_MODEL
+        finite = [s for s in scores if np.isfinite(s)]
+        if finite:
+            report["scores"] = {
+                "mean": round(float(np.mean(finite)), 1),
+                "median": round(float(np.median(finite)), 1),
+                "min": round(float(np.min(finite)), 1),
+                "max": round(float(np.max(finite)), 1),
+                "n_inf": len(scores) - len(finite),
+            }
+
+    # Example segments
+    def sample_examples(indices, n=NUM_EXAMPLES):
+        sample = random.sample(indices, min(n, len(indices)))
+        examples = []
+        for idx in sample:
+            entry = {
+                "original": flat_segs[idx][:500],
+                "decoded": flat_decoded[idx][:500],
+            }
+            if COMPARE_MODE == "semantic":
+                entry["similarity"] = round(scores[idx], 3)
+            elif COMPARE_MODE == "perplexity":
+                entry["perplexity"] = round(scores[idx], 1) if np.isfinite(scores[idx]) else "inf"
+            examples.append(entry)
+        return examples
+
+    report["examples"] = {
+        "successes": sample_examples(success_idx),
+        "failures": sample_examples(fail_idx),
+    }
+
+    with open(path, "w") as f:
+        yaml.dump(report, f, default_flow_style=False, sort_keys=False, allow_unicode=True, width=120)
+
+    print(f"\nReport saved to {path}")
 
 
 if __name__ == "__main__":
