@@ -28,12 +28,15 @@ MAX_SEQ_LEN = 512
 SEED = 42
 DTYPE = torch.float16
 
-# Comparison mode: "exact" or "semantic"
-COMPARE_MODE = "semantic"
+# Comparison mode: "exact", "semantic", or "perplexity"
+COMPARE_MODE = "perplexity"
 # Semantic similarity threshold (segments below this are "failures")
 SIM_THRESHOLD = 0.8
+PPL_THRESHOLD = 100.0
 # Sentence-transformer model for semantic comparison
 ST_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# Perplexity model and threshold (segments above this are "failures")
+PPL_MODEL = "Qwen/Qwen3-0.6B"
 
 random.seed(SEED)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -98,9 +101,42 @@ def compare_semantic(flat_segs: list[str], flat_decoded: list[str]) -> tuple[lis
     return success, scores
 
 
+def compare_perplexity(_flat_segs: list[str], flat_decoded: list[str]) -> tuple[list[bool], list[float]]:
+    """Per-segment perplexity of decoded text via a causal LM.
+    Returns (success_mask, scores) where scores are perplexity values
+    and success = ppl <= PPL_THRESHOLD."""
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    print(f"\nLoading perplexity model ({PPL_MODEL})...")
+    tokenizer = AutoTokenizer.from_pretrained(PPL_MODEL)
+    model = AutoModelForCausalLM.from_pretrained(
+        PPL_MODEL, torch_dtype=DTYPE, device_map=DEVICE,
+    )
+    model.eval()
+
+    print("Computing perplexity for decoded segments...")
+    ppls: list[float] = []
+    for i, text in enumerate(flat_decoded):
+        encodings = tokenizer(text, return_tensors="pt", truncation=True, max_length=1024)
+        input_ids = encodings.input_ids.to(model.device)
+        if input_ids.shape[1] <= 1:
+            ppls.append(float("inf"))
+            continue
+        with torch.no_grad():
+            outputs = model(input_ids, labels=input_ids)
+        ppls.append(torch.exp(outputs.loss).item())
+        if (i + 1) % 50 == 0 or i == len(flat_decoded) - 1:
+            print(f"  {i + 1}/{len(flat_decoded)}", end="\r")
+    print()
+
+    success = [p <= PPL_THRESHOLD for p in ppls]
+    return success, ppls
+
+
 COMPARE_FN = {
     "exact": compare_exact,
     "semantic": compare_semantic,
+    "perplexity": compare_perplexity,
 }
 
 
@@ -187,6 +223,16 @@ def main():
         print(f"Similarity scores — mean: {np.mean(scores):.3f}, "
               f"median: {np.median(scores):.3f}, "
               f"min: {np.min(scores):.3f}, max: {np.max(scores):.3f}")
+    elif COMPARE_MODE == "perplexity":
+        finite_scores = [s for s in scores if np.isfinite(s)]
+        print(f"\nPerplexity threshold : {PPL_THRESHOLD}")
+        if finite_scores:
+            print(f"Perplexity scores — mean: {np.mean(finite_scores):.1f}, "
+                  f"median: {np.median(finite_scores):.1f}, "
+                  f"min: {np.min(finite_scores):.1f}, max: {np.max(finite_scores):.1f}")
+        n_inf = len(scores) - len(finite_scores)
+        if n_inf:
+            print(f"  ({n_inf} segments too short to score)")
 
     print("\nPer-trace failure fraction:")
     print(f"  mean   = {np.mean(per_trace_fail):.3f}")
@@ -223,7 +269,12 @@ def main():
         for idx in sample:
             orig = flat_segs[idx]
             deco = flat_decoded[idx]
-            score_str = f"  [score={scores[idx]:.3f}]" if COMPARE_MODE == "semantic" else ""
+            if COMPARE_MODE == "semantic":
+                score_str = f"  [sim={scores[idx]:.3f}]"
+            elif COMPARE_MODE == "perplexity":
+                score_str = f"  [ppl={scores[idx]:.1f}]"
+            else:
+                score_str = ""
             print(f"\n[orig]  {repr(orig[:300])}")
             print(f"[deco]  {repr(deco[:300])}{score_str}")
 
