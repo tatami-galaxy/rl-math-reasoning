@@ -47,7 +47,7 @@ class Config:
     n_epochs: int = field(default=10)
     log_steps: int = field(default=10)
     lr: float = field(default=1e-3)
-    n_decode_examples: int = field(default=3)  # SONAR decode examples after eval
+    n_decode_examples: int = field(default=1)  # SONAR decode examples after eval
 
 
 # ---------------------------------------------------------------------------
