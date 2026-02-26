@@ -1,0 +1,106 @@
+config:
+  dataset: Ujan/deepmath_trace_5
+  split: train
+  num_traces: 20
+  seg_delimiter: '''\n\n'''
+  compare_mode: semantic
+  batch_size: 64
+  max_seq_len: 512
+  seed: 42
+  sim_threshold: 0.75
+  st_model: sentence-transformers/all-MiniLM-L6-v2
+summary:
+  total_segments: 1818
+  successes: 1302
+  success_pct: 71.6
+  failures: 516
+  failure_pct: 28.4
+per_trace_failure_fraction:
+  mean: 0.32
+  median: 0.282
+  min: 0.076
+  max: 0.8
+segment_length_chars:
+  successes:
+    n: 1302
+    mean: 103.2
+    median: 62.0
+  failures:
+    n: 516
+    mean: 303.7
+    median: 260.0
+scores:
+  mean: 0.809
+  median: 0.892
+  min: -0.006
+  max: 1.0
+examples:
+  successes:
+  - original: If we set 3C -1 ≥1, i.e., C ≥ 2/3, then (3C -1) log n ≥ log n. But we need log n ≥1, which holds when n ≥3.
+      However, the original inequality would require (3C -1) log n ≥1. If we set C such that 3C -1 ≥1, which would mean C
+      ≥ 2/3, then since log n ≥1 for n ≥3, we have (3C -1) log n ≥1*1=1. Therefore, for n ≥3 and C ≥2/3, the inequality holds.
+    decoded: If we set 3C ≥ 1C, i.e. C ≥ 2, then c ≥ 3N ≥ 1C, we need log ≥ 1C, but log ≥ 1C requires n ≥ 3. But if the original
+      inconsistency is true, then c ≥ 3N ≥ 1C would require log ≥ 1C. Therefore, since C ≥ 3N ≥ 1C, i.e. log ≥ 3N ≥ 1C, we
+      have log ≥ 1C for n ≥ 1C. Therefore, for c ≥ 3N ≥ 3 and log ≥ 2C, we have log ≥ 3C.
+    similarity: 0.859
+  - original: Alternatively, maybe I can approach this problem using substitution instead of Lagrange multipliers.
+    decoded: Alternatively, maybe I can approach this problem using substitution instead of Lagrange multipliers.
+    similarity: 1.0
+  - original: To solve the problem of determining how many initial distributions of 0's and 1's in the eleventh row result
+      in the top square being a multiple of 3, we need to consider the contributions of each entry in the eleventh row to
+      the top square.
+    decoded: To solve the problem of determining how many initial distributions of 0s and 1s in the eleventh row result in
+      the top square being a multiple of 3, we need to consider the contributions of each entry in the eleventh row to the
+      top square.
+    similarity: 0.993
+  - original: 'Alternatively, perhaps we can find an explicit formula for x_k. Let''s try to analyze the recurrence relation.
+      Let me see:'
+    decoded: Alternatively, maybe we can find an explicit formula for x_k. Let's try to analyze the recurrence relation.
+    similarity: 0.996
+  - original: 'Wait, hold on. Let''s compute:'
+    decoded: 'Wait, hold on. Let''s calculate:'
+    similarity: 0.922
+  failures:
+  - original: Okay, so I need to find the radius of convergence for the power series given by \(x^2\left(1+\sum_{n=1}^{\infty}\frac{(-1)^n}{(2n)!}2^{2n-1}x^{2n}\right)\),
+      which represents \(x^2\cos(x)^2\). Hmm, radius of convergence... right, that's the value R such that the series converges
+      if |x| < R and diverges if |x| > R.
+    decoded: Okay, so I need to find the radius of convergence for the convergence series given by x^{\displaystyle x^{2}}{\displaystyle
+      x^{2}}{\displaystyle x^{1}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyle x^{1}}{\displaystyle x^{2}}{\displaystyle
+      x^{2}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyle x^{1}}{\displaystyle x^{2}}{\displaystyle
+      x^{2}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyle x^{2}}{\displaystyl
+    similarity: 0.576
+  - original: Now, what about negative x? Since both sin(x) and x² are odd and even functions respectively. So sin(-x) = -sin(x),
+      and (-x)² = x². Therefore, the equation sin(x)=x² for negative x becomes -sin(x) = x². But x² is positive (except at
+      x=0), and -sin(x) would be positive when sin(x) is negative, which is when x is negative. So for negative x, sin(x)
+      is negative, but x² is positive. Therefore, sin(x)=x² would require a negative number to equal a positive number, which
+      is impossible except at x=0.
+    decoded: So what about negative x? since sin2 and sin2 are both equal and odd, so sin-sin- (x) = sin- (x) = sin2 and sin-
+      (x) = sin- (x) = sin2 so sin2's equation for sin2 (x) is negative x. but if sin2 (x) is positive, then sin2 (x) is negative
+      x. but if sin2 (x) is negative x, then sin2 (x) is positive x. so sin sin sin sin sin sin sin sin sin sin sin sin sin
+      sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin sin
+      sin sin sin sin sin sin sin s
+    similarity: 0.578
+  - original: So, B¹⁶ = B. So, even though B⁸ was A B A³, B¹⁶ ends up being B. Therefore, the conjugation approach was correct?
+      Wait, but how come when we compute B⁸, it's A B A³, but B¹⁶ is B? Because when we compute B⁸ squared, we end up with
+      B. That seems to make sense. So, even though B⁸ is not B itself, when we square it, we get back to B. So, B¹⁶ = B. Therefore,
+      the answer is B¹⁶ = B. Wait, but that seems counterintuitive. Let me verify again.
+    decoded: So B16 = B, so even though B8 is B1, B3 = A, B16 is the reason for the alignment. But it turns out that the alignment
+      solution is correct. So even though B16 is A, B8 is B3, because B16 is B1, when we calculate the B quadratic, it looks
+      like it's B. So if B8 is B, it doesn't turn out to be B, but it turns out to be B, B8 is B. So back to A. B16 = B16
+      = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 = B16 =
+      B16 = B16 = B16 = B16 = B16 = B
+    similarity: 0.32
+  - original: Alternatively, maybe there's a solution with \(y\) being a larger integer? Let's see, but \(5^x -1 = 2^y\).
+      For \(y\) to be an integer, \(5^x\) must be congruent to 1 modulo 2. Since 5 is odd, any power of 5 is odd, so \(5^x
+      -1\) is even, which is good because \(2^y\) is even (for \(y \geq 1\)). So, that's consistent.
+    decoded: Alternatively, maybe there's a solution that's larger than y is a positive integer. So let's see, 5^{\displaystyle
+      5^{-1}^{2}^{-1}^{-1}^{2}^{-1}^{-1}^{-2}^{-1}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-3}^{-2}^{-2}^{-2}^{-3}^{-2}^{-2}^{-2}^{-3}^{-2}^{-2}^{-3}^{-2}^{-2}^{-3}^{-2}^{-2}^{-3}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-2}^{-3^{-2}^{-2}^{-2}^{-2}^{-3^{-2}^{-2}^{-2}^{-2^{-2}^{-2}^{-2}^{-3^{-2}^{-2}^{-2}^{-2^{-2}^
+    similarity: 0.438
+  - original: From what I remember, a function f(x, y) is called homogeneous of degree k if for every real number t > 0, f(tx,
+      ty) = t^k f(x, y). So, essentially, scaling the inputs x and y by a factor t scales the output by t^k. The task is to
+      find a and b such that this property holds for the given function, and then determine k.
+    decoded: As far as I know, a function f (x, y) is called homogeneous of degree k if for every real number f (x,y) > f
+      (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y)
+      > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y)
+      > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y) > f (x,y)
+    similarity: 0.729

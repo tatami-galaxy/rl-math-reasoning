@@ -17,7 +17,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from datasets import load_dataset
 from transformers import HfArgumentParser
 
-from embed import Embedder, SentenceTransformerEmbedder
+from embed import Embedder, SentenceTransformerEmbedder, SonarEmbedder
 from latent_ode import LatentODE, elbo_batch
 
 
@@ -52,6 +52,7 @@ class Config:
     n_epochs: int = field(default=10)
     log_steps: int = field(default=10)
     lr: float = field(default=1e-3)
+    n_decode_examples: int = field(default=3)  # SONAR decode examples after eval
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +181,65 @@ def evaluate(model: LatentODE, loader: DataLoader) -> float:
     return total_mse / n_batches
 
 
+@eqx.filter_jit
+def reconstruct_batch(model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array):
+    """Reconstruct embeddings through the ODE (deterministic, z0=mu).
+
+    Returns:
+        x_hat: (B, T_max, D) reconstructed embeddings
+    """
+    def single(x, m):
+        mu, _ = model.encoder(x, m)
+        zs = model.solve(mu, ts)
+        return model.decode(zs)
+
+    return jax.vmap(single)(padded, mask)
+
+
+def decode_examples(
+    model: LatentODE,
+    embedder: SonarEmbedder,
+    loader: DataLoader,
+    n_examples: int,
+):
+    """Reconstruct test trajectories through the ODE and decode with SONAR.
+
+    For each example trace, prints the SONAR-decoded text of the original
+    embeddings side-by-side with the ODE-reconstructed embeddings.
+    """
+    collected = 0
+    print(f"\n{'=' * 70}")
+    print("SONAR DECODE EXAMPLES (original vs ODE-reconstructed)")
+    print("=" * 70)
+
+    for padded, mask, lengths, ts in loader:
+        padded_jax = jnp.array(padded.numpy())
+        mask_jax = jnp.array(mask.numpy())
+        ts_jax = jnp.array(ts.numpy())
+
+        x_hat = reconstruct_batch(model, padded_jax, mask_jax, ts_jax)
+        x_hat_np = np.array(x_hat)
+        padded_np = padded.numpy()
+        lengths_np = lengths.numpy()
+
+        for i in range(len(padded_np)):
+            if collected >= n_examples:
+                return
+            T = int(lengths_np[i])
+            orig_emb = padded_np[i, :T]      # (T, D)
+            recon_emb = x_hat_np[i, :T]       # (T, D)
+
+            orig_text = embedder.decode(orig_emb.astype(np.float32))
+            recon_text = embedder.decode(recon_emb.astype(np.float32))
+
+            collected += 1
+            print(f"\n--- Example {collected} ({T} segments) ---")
+            for t in range(T):
+                print(f"  [{t}] orig : {repr(orig_text[t][:200])}")
+                print(f"       recon: {repr(recon_text[t][:200])}")
+                print()
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -198,6 +258,11 @@ def main():
     if config.embed_type == "sentence-transformers":
         embedder = SentenceTransformerEmbedder(
             model_name=config.embed_model,
+            device=config.device,
+            batch_size=config.embed_batch_size,
+        )
+    elif config.embed_type == "sonar":
+        embedder = SonarEmbedder(
             device=config.device,
             batch_size=config.embed_batch_size,
         )
@@ -279,6 +344,10 @@ def main():
     test_mse = evaluate(model, test_loader)
     writer.add_scalar("mse/test", test_mse, config.n_epochs)
     print(f"Test MSE: {test_mse:.6f}")
+
+    # Decode examples with SONAR
+    if config.embed_type == "sonar" and config.n_decode_examples > 0:
+        decode_examples(model, embedder, test_loader, config.n_decode_examples)
 
     writer.close()
 

@@ -20,4 +20,5 @@ python process_deepmath_traces.py --hf_key
 Train latent ode : 
 
 ```
-CUDA_VISIBLE_DEVICES=0 python train_latent_ode.py --dataset_name Ujan/deepmath_trace_2
+CUDA_VISIBLE_DEVICES=0 python train_latent_ode.py --dataset_name Ujan/deepmath_trace_2 --embed_type sonar --n_epochs 10
+```

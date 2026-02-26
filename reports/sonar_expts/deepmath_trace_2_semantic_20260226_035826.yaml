@@ -1,0 +1,108 @@
+config:
+  dataset: Ujan/deepmath_trace_2
+  split: train
+  num_traces: 20
+  seg_delimiter: '''\n\n'''
+  compare_mode: semantic
+  batch_size: 64
+  max_seq_len: 512
+  seed: 42
+  sim_threshold: 0.75
+  st_model: sentence-transformers/all-MiniLM-L6-v2
+summary:
+  total_segments: 1061
+  successes: 849
+  success_pct: 80.0
+  failures: 212
+  failure_pct: 20.0
+per_trace_failure_fraction:
+  mean: 0.269
+  median: 0.278
+  min: 0.007
+  max: 0.705
+segment_length_chars:
+  successes:
+    n: 849
+    mean: 173.5
+    median: 110.0
+  failures:
+    n: 212
+    mean: 420.2
+    median: 420.0
+scores:
+  mean: 0.856
+  median: 0.93
+  min: -0.016
+  max: 1.0
+examples:
+  successes:
+  - original: Yes, that's correct. So A^4 is indeed [[0, -1], [1, -1]]. Not the identity. So n=4 is out. Option (c) is incorrect.
+    decoded: That's right. So A^4 is indeed [0,1,1], [1,1], not the identity. So n=4 is out.
+    similarity: 0.911
+  - original: 'The integral in question is:
+
+      \[
+
+      \int_{-\infty}^{\infty} x^3 \, dx
+
+      \]'
+    decoded: 'The integral in question is is: \[{int_{\infty} \infty} x^3 \, dx {\displaystyle x^{\infty} }'
+    similarity: 0.891
+  - original: First, probability usually involves figuring out the number of favorable outcomes divided by the total number
+      of possible outcomes. But here, we're dealing with natural numbers, which are infinite. So how do you calculate probability
+      when there are infinitely many possibilities? I remember something about natural density or something like that. Maybe
+      that's the concept I need here.
+    decoded: First, probability usually involves determining the number of positive outcomes divided by the total number of
+      possible outcomes, but here we're dealing with natural numbers, which are infinite. so how do you calculate probability
+      when there are infinite possibilities?
+    similarity: 0.95
+  - original: 'Adding both contributions together: 0 + 3/8 = 3/8. So, the expected value E[VY] is 3/8.'
+    decoded: 'Adding both contributions together: 0 + 3/8 = 3/8. Therefore, the expected value E [VY] is 3/8.'
+    similarity: 0.999
+  - original: b=8:1
+    decoded: b=8:1
+    similarity: 1.0
+  failures:
+  - original: But wait, pairs of natural numbers. So we're dealing with a two-dimensional grid where each point (a, b) represents
+      a pair. The idea is to find the limit as N approaches infinity of the number of pairs (a, b) with a <= N and b <= N
+      such that a/b is an integer, divided by N^2 (the total number of pairs up to N). Then take the limit as N goes to infinity.
+      That should give the probability.
+    decoded: So wait for the natural number pairs, but we're dealing with a two-dimensional grid where every point (a, b)
+      represents a pair. The idea is to find the boundary when the number of N is equal to the sum of N (a, b) = n and N (a,
+      b) = n.
+    similarity: 0.56
+  - original: Alternatively, I can think of V and Y as independent variables and use the property that E[VY] = E[V]E[Y]. Since
+      V is uniform on (0,1), E[V] = integral from 0 to 1 of v dv = [v^2 / 2] from 0 to 1 = 1/2. And E[Y] = 3/4 as computed
+      before. Then, 1/2 * 3/4 = 3/8. So, all methods lead to the same answer, which is reassuring.
+    decoded: Alternatively, I can think of V and Y as independent variables and use the property EY = EY [V] = EY [V]. Since
+      EY is homogeneous from 0 to 1, V = [V] = 1⁄2, V = [V] = 1⁄2, from 0 to 1⁄2, and EY = [V] = 1⁄2, from 1⁄3, so all three
+      equals.
+    similarity: 0.703
+  - original: '\[
+
+      n = \frac{1908 - 19 \times 4}{8} = \frac{1908 - 76}{8} = \frac{1832}{8} = 229
+
+      \]'
+    decoded: \n\n{\frac {1908 - 19 times 4}{\frac {8} }{\frac {8} }{\frac {1608 - 78}{\frac {1883}{\frac {2} }{\frac {2}}{\frac
+      {8}}}{\frac {8}}}{\frac {8}}{\frac {8}}{\frac {8}{\frac {8}}{\frac {8}}{\frac {8}}{\frac {8}}{\frac {8}}{\frac {8}{\frac
+      {8}}{\frac {8}{\frac {8}}{\frac {8}{\frac {8}}{\frac {8}{\frac {8}{\frac {8}{\frac {8}{\frac }{\frac }{\frac }{\frac
+      }{\frac }{\frac }{\frac }{\frac }{\frac }{\frac }{\frac }{\frac }{\frac }{\fr
+    similarity: 0.463
+  - original: Wait, but maybe use the half-open interval [a + ε, b) and then note that the remaining part (a, a + ε) can be
+      covered by another half-open interval, say [a, a + ε), which has length ε. Then, the total length would be ℓ([a + ε,
+      b)) + ℓ([a, a + ε)) = (b - a - ε) + ε = b - a. But since (a, b) is covered by these two intervals, if the length function
+      is subadditive, then ℓ((a, b)) ≤ ℓ([a + ε, b)) + ℓ([a, a + ε)) = b - a. Also, since [a + ε, b) is contained in (a, b),
+      we have ℓ([a + ε, b)) ≤ ℓ((a, b)
+    decoded: 'Perhaps wait, but let''s use a half-open interval [a, b, e, f] and then let''s note that the remaining portion
+      (a, b, e, f) can be covered by another half-open interval [a, a, e, l], which has the same length as [a, b, l], so the
+      length of [a, b, l] is [a, b, b, l] = [a, b, b, l] = [a, b, b, l] = [a, b, b, l] = [a, b, b, l], but since the portion
+      is subdivided into two portions, then [a, b, b, l] = [a, b, b, l] = [a, b, b, b, l], then [a, b, b, l] is subdivided
+      into [a, b, b, l], so [a, b, b, l], '
+    similarity: 0.655
+  - original: Wait, so the confusion was maybe between general metric spaces and R^n. In R^n, due to Heine-Borel, closed and
+      bounded is compact, but even closed and unbounded sets can have the distance achieved because intersecting with a closed
+      ball gives a compact set. Therefore, in R^n, closedness is sufficient. Therefore, the correct answer is option 2.
+    decoded: Wait, maybe it was confused because in general metric spaces and Rn. in Rn, because in Hayden, closed-complete
+      and bounded are compact, but even closed spaces and bounded spaces can have a gap because a closed set is given with
+      a cube. therefore, closed-complete is sufficient. so in Rn, the correct answer is 2.
+    similarity: 0.626

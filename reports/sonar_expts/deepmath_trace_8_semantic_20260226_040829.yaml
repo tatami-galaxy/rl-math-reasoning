@@ -1,0 +1,93 @@
+config:
+  dataset: Ujan/deepmath_trace_8
+  split: train
+  num_traces: 20
+  seg_delimiter: '''\n\n'''
+  compare_mode: semantic
+  batch_size: 64
+  max_seq_len: 512
+  seed: 42
+  sim_threshold: 0.75
+  st_model: sentence-transformers/all-MiniLM-L6-v2
+summary:
+  total_segments: 1597
+  successes: 1151
+  success_pct: 72.1
+  failures: 446
+  failure_pct: 27.9
+per_trace_failure_fraction:
+  mean: 0.364
+  median: 0.339
+  min: 0.118
+  max: 0.75
+segment_length_chars:
+  successes:
+    n: 1151
+    mean: 150.0
+    median: 91.0
+  failures:
+    n: 446
+    mean: 442.9
+    median: 395.5
+scores:
+  mean: 0.803
+  median: 0.887
+  min: -0.053
+  max: 1.0
+examples:
+  successes:
+  - original: Thus, the answer is \(\boxed{Yes}\).
+    decoded: Thus, the answer is \ (\boxed\) \ (\).
+    similarity: 0.795
+  - original: 'Let''s see. F20 has order 20. Its elements are:'
+    decoded: 'Let''s see. F20 has order 20. its elements are:'
+    similarity: 1.0
+  - original: 'Alternatively, let''s consider that in the shifted cylindrical coordinates (with w = z - 2), the integral becomes:'
+    decoded: 'Alternatively, let''s consider that in the shifted cylindrical coordinates (with w = z - 2), the integral becomes:'
+    similarity: 1.0
+  - original: '183,499: check divisibility by 7: 183499 ÷7=26214.142... 7*26214=183,498, so remainder 1. Not divisible by
+      7.'
+    decoded: '183,491: check divisibility by 7183499 ÷ 72621=14244. * 726214 = 183,498: the remainder, is not divisible by
+      7.'
+    similarity: 0.915
+  - original: 'First, note that 14,863,419 ÷ 3: 1+4+8+6+3+4+1+9= 36, which is divisible by 3. So 14,863,419 ÷3=4,954,473.'
+    decoded: 'First, notice that 14,863,419 ÷ 1: 3 + 4+8+6+4+1+3+9 = 36, which is divisible by 3. So, 14,863,419 ÷ 1 = 4,953,474.'
+    similarity: 0.994
+  failures:
+  - original: But let me double-check. Maybe there's a different convention for the normal vector? For instance, sometimes
+      the normal vector could be inward or outward pointing. If \(\Omega\) is the domain above the graph \(x_n = \psi(x')\),
+      then the outward normal would point upwards, but the gradient of \(F\) as I defined earlier points in the direction
+      \((\nabla \psi, -1)\), which would be pointing downward if \(\nabla \psi\) is zero. Wait, if \(\nabla \psi(0) = 0\),
+      then the gradient is \((0, \ldots, 0, -
+    decoded: 'But let''s re-check: there might be a different equation for the normal vector. Sometimes, for example, the
+      normal vector might be inward or outward. If I''m pointing to the graph, it would point to the center of the graph,
+      but if I''m pointing to the center of the graph, it would point to the top of the graph. If I''m pointing to the center
+      of the graph, it would point to the bottom of the graph.'
+    similarity: 0.511
+  - original: 'If x is in E, then d(x, E) = 0, but the function 1/d(x, E) would be infinity at x. But we need f to be defined
+      on all of R, so maybe we need to take the limit as we approach x from outside E. Wait, but if E has isolated points,
+      for example, take E = {0}. Then d(x, E) = |x|, so 1/d(x, E) is 1/|x|, which is unbounded as x approaches 0, but at x=0,
+      it''s undefined. But the problem requires f: R → R, so we need to define f at all points, including those in E. So,
+      maybe we need to assign some value at'
+    decoded: So if x is at e, d = 0, e = 1/f, d = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e =
+      1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e =
+      1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e =
+      1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f, e =
+      1/f, e = 1/f, e = 1/f, e = 1/f, e = 1/f,
+    similarity: 0.405
+  - original: One way is to define f(x) = 0 on E, but in every neighborhood of any x in E, the function takes on all values.
+      But how? Wait, perhaps using a function that oscillates wildly? For example, f(x) = 0 if x ∈ E, and f(x) = tan(d(x,
+      E)) if x ∉ E. Wait, but tan(d(x, E)) would blow up as d(x, E) approaches π/2, which may not correspond to approaching
+      E. Hmm, not sure.
+    decoded: 'One way is to define f = 0 in e=x, but in any x neighbourhood of E, every function takes the values of e. But,
+      how can you do that? probably by using a fluctuating function. For example, if f = 0 (x) ∈ E, but f = 0 (x) ∈ E (x)
+      ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E) ∈ E (x) ∈ E (x) ∈ E (x)
+      ∈ E (x) ∈ E (x) ∈ E (x) ∈ E) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x)
+      ∈ E) ∈ E (x) ∈ E (x) ∈ E (x) ∈ E (x) ∈ '
+    similarity: 0.531
+  - original: Then, ∫ u dv = uv |_{log B}^∞ - ∫ v du.
+    decoded: Then,  ⁇  u dv =  ⁇  b  ⁇   ⁇   ⁇  v  ⁇  du.
+    similarity: 0.703
+  - original: \( \int_{0}^{2} \sqrt{r² + 4 + 4r sinθ} \cdot r \, dr \)
+    decoded: '{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFF}{\cHFFFFFFFF}{\cHFFFFFF}{\cHFFFFFFFF}{\cHFFFFFFFFFF}{\cHFFFFFFFF}{\cHFFFFFFFF}{\cHFFFFFFFFFF}{\cHFFFFFFFFFF}{\cHFFFFFFFF}{\cHFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFFFFFF}{\cHFFFFFFFFFFFFFFFFFFFFFFFFFFFF}'
+    similarity: 0.003
