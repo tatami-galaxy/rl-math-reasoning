@@ -15,7 +15,7 @@ from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
 
 from latent_ode import LatentODE
-from train_latent_ode import Config, build_dataset, collate_fn
+from train_latent_ode import Config, build_dataset, collate_fn, EmbeddingNormalizer
 from embed import SentenceTransformerEmbedder
 
 
@@ -23,7 +23,7 @@ from embed import SentenceTransformerEmbedder
 # Load model
 # ---------------------------------------------------------------------------
 
-def load_model(model_dir: str) -> tuple[LatentODE, Config, int]:
+def load_model(model_dir: str) -> tuple[LatentODE, Config, int, EmbeddingNormalizer | None]:
     with open(os.path.join(model_dir, "config.json")) as f:
         config_dict = json.load(f)
 
@@ -35,7 +35,13 @@ def load_model(model_dir: str) -> tuple[LatentODE, Config, int]:
     model = eqx.tree_deserialise_leaves(
         os.path.join(model_dir, "model.eqx"), skeleton
     )
-    return model, config, d_embed
+
+    normalizer_path = os.path.join(model_dir, "normalizer.npz")
+    normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
+    if normalizer is not None:
+        print("Loaded normalizer from", normalizer_path)
+
+    return model, config, d_embed, normalizer
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +157,7 @@ def main():
 
     # Load model
     print(f"Loading model from {args.model_dir}")
-    model, config, d_embed = load_model(args.model_dir)
+    model, config, d_embed, normalizer = load_model(args.model_dir)
 
     # Build embedder + dataset (same config as training)
     embedder = SentenceTransformerEmbedder(
@@ -163,6 +169,12 @@ def main():
     # this should be fine if model does not overfit
     # check test MSE first
     dataset = build_dataset(config, embedder)
+
+    # Apply normalizer so embeddings match the space the model was trained in
+    if normalizer is not None:
+        print("Applying normalizer to embeddings...")
+        for i in range(len(dataset.embeddings)):
+            dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
 
     # Optionally subsample for speed
     if args.max_traces < len(dataset):

@@ -22,6 +22,48 @@ from latent_ode import LatentODE, elbo_batch
 
 
 # ---------------------------------------------------------------------------
+# Embedding normalizer (LCM §2.3.1)
+# ---------------------------------------------------------------------------
+
+class EmbeddingNormalizer:
+    """Per-dimension scaler
+
+    Fits median and IQR statistics over training embeddings, then:
+      normalize(x)   = (x - median) / IQR   — applied before the model
+      denormalize(x) = x * IQR + median     — applied after the model, before SONAR decoding
+    """
+
+    def fit(self, embeddings: list[np.ndarray]) -> "EmbeddingNormalizer":
+        """Compute per-dimension median and IQR from a list of (T_i, D) arrays."""
+        all_vecs = np.concatenate(embeddings, axis=0)  # (N, D)
+        self.median = np.median(all_vecs, axis=0)       # (D,)
+        q1 = np.percentile(all_vecs, 25, axis=0)
+        q3 = np.percentile(all_vecs, 75, axis=0)
+        self.scale = np.maximum(q3 - q1, 1e-8)         # (D,) IQR, floored for stability
+        return self
+
+    def normalize(self, x: np.ndarray) -> np.ndarray:
+        """(x - median) / IQR"""
+        return (x - self.median) / self.scale
+
+    def denormalize(self, x: np.ndarray) -> np.ndarray:
+        """x * IQR + median"""
+        return x * self.scale + self.median
+
+    def save(self, path: str) -> None:
+        np.savez(path, median=self.median, scale=self.scale)
+        print(f"Saved normalizer to {path}")
+
+    @classmethod
+    def load(cls, path: str) -> "EmbeddingNormalizer":
+        data = np.load(path)
+        norm = cls()
+        norm.median = data["median"]
+        norm.scale = data["scale"]
+        return norm
+
+
+# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
@@ -31,7 +73,8 @@ class Config:
     # data
     dataset_name: str = field(default="Ujan/deepmath_trace_2")
     dataset_split: str = field(default="train")
-    embed_type: str = field(default="sentence-transformers")
+    embed_type: str = field(default="sonar")
+    normalize_embeddings: bool = field(default=True)  # scaler on SONAR embeddings
     embed_model: str = field(default="sentence-transformers/all-MiniLM-L6-v2")
     device: str = field(default="cuda")
     min_segments: int = field(default=10)
@@ -39,13 +82,13 @@ class Config:
     segment_by: str = field(default="\n\n")
 
     # model
-    d_proj: int = field(default=128)       # input projection dim
-    d_encoder: int = field(default=128)    # encoder hidden dim
-    d_z: int = field(default=64)           # latent ODE dim
-    d_ode_hidden: int = field(default=128) # ODE MLP hidden dim
-    d_decoder_depth: int = field(default=2) # decoder MLP depth
-    beta: float = field(default=1.0)       # KL weight in ELBO
-    
+    d_proj: int = field(default=128)         # input projection dim
+    d_encoder: int = field(default=128)      # encoder hidden dim
+    d_z: int = field(default=64)             # latent ODE dim
+    d_ode_hidden: int = field(default=128)   # ODE MLP hidden dim
+    d_decoder_depth: int = field(default=2)  # decoder MLP depth
+    beta: float = field(default=1.0)         # KL weight in ELBO
+
     # training
     seed: int = field(default=42)
     test_size: float = field(default=0.1) 
@@ -55,8 +98,8 @@ class Config:
     lr: float = field(default=1e-3)
 
     # eval
-    n_decode_examples: int = field(default=1)  # SONAR decode examples after eval
-    eval_sampled: bool = field(default=False)  # use sampled z0 for test MSE
+    n_decode_examples: int = field(default=1)   # SONAR decode examples after eval
+    eval_sampled: bool = field(default=False)   # use sampled z0 for test MSE
     sonar_sampler: str = field(default="beam")  # SONAR text decoding: "beam", "top_p", "top_k"
     sonar_top_p: float = field(default=0.99)    # p value for top_p / nucleus sampler
     sonar_top_k: int = field(default=50)        # k value for top_k sampler
@@ -274,6 +317,7 @@ def decode_examples(
     sampled: bool = False,
     rng_key: jax.Array | None = None,
     sonar_sampler=None,
+    normalizer: EmbeddingNormalizer | None = None,
 ):
     """Reconstruct test trajectories through the ODE and decode with SONAR.
 
@@ -306,11 +350,19 @@ def decode_examples(
             if collected >= n_examples:
                 return
             T = int(lengths_np[i])
-            orig_emb = padded_np[i, :T]      # (T, D)
-            recon_emb = x_hat_np[i, :T]       # (T, D)
+            orig_emb = padded_np[i, :T]    # (T, D) — normalized
+            recon_emb = x_hat_np[i, :T]    # (T, D) — normalized
 
-            orig_text = embedder.decode(orig_emb.astype(np.float32), sampler=sonar_sampler)
-            recon_text = embedder.decode(recon_emb.astype(np.float32), sampler=sonar_sampler)
+            # Denormalize before SONAR decoding (LCM §2.3.1 PostNet)
+            if normalizer is not None:
+                orig_emb = normalizer.denormalize(orig_emb).astype(np.float32)
+                recon_emb = normalizer.denormalize(recon_emb).astype(np.float32)
+            else:
+                orig_emb = orig_emb.astype(np.float32)
+                recon_emb = recon_emb.astype(np.float32)
+
+            orig_text = embedder.decode(orig_emb, sampler=sonar_sampler)
+            recon_text = embedder.decode(recon_emb, sampler=sonar_sampler)
 
             collected += 1
             print(f"\n--- Example {collected} ({T} segments) ---")
@@ -359,6 +411,20 @@ def main():
         generator=torch.Generator().manual_seed(config.seed),
     )
     print(f"Train: {n_train} traces  |  Test: {n_test} traces")
+
+    # Optionally fit normalizer on training embeddings
+    normalizer = None
+    if config.normalize_embeddings:
+        print("Fitting embedding normalizer on training data...")
+        train_embs = [dataset.embeddings[i] for i in train_dataset.indices]
+        normalizer = EmbeddingNormalizer().fit(train_embs)
+        print(f"  median range : [{normalizer.median.min():.4f}, {normalizer.median.max():.4f}]")
+        print(f"  IQR range    : [{normalizer.scale.min():.6f}, {normalizer.scale.max():.4f}]")
+        for i in range(len(dataset.embeddings)):
+            dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
+        print("Normalization applied.")
+    else:
+        print("Embedding normalization disabled.")
 
     loader = DataLoader(
         train_dataset,
@@ -416,6 +482,10 @@ def main():
                 writer.add_scalar("loss/batch", batch_loss, global_step)
                 writer.add_scalar("loss/recon_batch", batch_recon, global_step)
                 writer.add_scalar("loss/kl_batch", batch_kl, global_step)
+                print(
+                    f"  step {global_step}  "
+                    f"loss={batch_loss:.4f}  recon={batch_recon:.4f}  kl={batch_kl:.4f}"
+                )
 
             global_step += 1
 
@@ -448,13 +518,16 @@ def main():
             model, embedder, test_loader, config.n_decode_examples,
             sampled=config.eval_sampled, rng_key=key,
             sonar_sampler=sonar_sampler,
+            normalizer=normalizer,
         )
 
     writer.close()
 
-    # Save model and config
+    # Save model, normalizer, and config
     os.makedirs(output_dir, exist_ok=True)
     eqx.tree_serialise_leaves(os.path.join(output_dir, "model.eqx"), model)
+    if normalizer is not None:
+        normalizer.save(os.path.join(output_dir, "normalizer.npz"))
     config_dict = vars(config)
     config_dict["d_embed"] = d_embed
     with open(os.path.join(output_dir, "config.json"), "w") as f:
