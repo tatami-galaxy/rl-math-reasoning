@@ -74,7 +74,7 @@ class Config:
     dataset_name: str = field(default="Ujan/deepmath_trace_2")
     dataset_split: str = field(default="train")
     embed_type: str = field(default="sonar")
-    normalize_embeddings: bool = field(default=True)  # scaler on SONAR embeddings
+    normalize_embeddings: bool = field(default=False)  # scaler on SONAR embeddings
     embed_model: str = field(default="sentence-transformers/all-MiniLM-L6-v2")
     device: str = field(default="cuda")
     min_segments: int = field(default=10)
