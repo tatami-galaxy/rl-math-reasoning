@@ -106,22 +106,25 @@ class SonarEmbedder(Embedder):
         print()
         return np.concatenate(parts, axis=0)
 
-    def decode(self, embeddings: np.ndarray) -> list[str]:
+    def decode(self, embeddings: np.ndarray, sampler=None) -> list[str]:
         """Decode embeddings back to text.
 
         Args:
             embeddings: Array of shape (N, D).
+            sampler: Optional fairseq2 sampler (e.g. TopPSampler, TopKSampler).
+                     If None, uses default beam search.
 
         Returns:
             List of N decoded strings.
         """
         emb_tensor = torch.from_numpy(embeddings).to(self.device)
+        kwargs = dict(target_lang=self.target_lang, max_seq_len=self.max_seq_len)
+        if sampler is not None:
+            kwargs["sampler"] = sampler
         decoded = []
         for i in range(0, len(emb_tensor), self.batch_size):
             batch = emb_tensor[i : i + self.batch_size]
-            decoded.extend(
-                self.decoder.predict(batch, target_lang=self.target_lang, max_seq_len=self.max_seq_len)
-            )
+            decoded.extend(self.decoder.predict(batch, **kwargs))
             print(f"  decoded {min(i + self.batch_size, len(emb_tensor))}/{len(emb_tensor)}", end="\r")
         print()
         return decoded

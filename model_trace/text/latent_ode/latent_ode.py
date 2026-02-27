@@ -71,12 +71,12 @@ class Decoder(eqx.Module):
     """Maps latent states back to embedding space."""
     mlp: eqx.nn.MLP
 
-    def __init__(self, d_z: int, d_embed: int, *, key: jax.Array):
+    def __init__(self, d_z: int, d_embed: int, depth: int = 2, *, key: jax.Array):
         self.mlp = eqx.nn.MLP(
             in_size=d_z,
             out_size=d_embed,
             width_size=d_z * 2,
-            depth=2,
+            depth=depth,
             activation=jax.nn.tanh,
             key=key,
         )
@@ -94,7 +94,7 @@ class LatentODE(eqx.Module):
         k1, k2, k3 = jax.random.split(key, 3)
         self.encoder = GRUEncoder(d_embed, config.d_proj, config.d_encoder, config.d_z, key=k1)
         self.ode_func = ODEFunc(config.d_z, config.d_ode_hidden, key=k2)
-        self.decoder = Decoder(config.d_z, d_embed, key=k3)
+        self.decoder = Decoder(config.d_z, d_embed, depth=config.d_decoder_depth, key=k3)
 
     def encode(
         self, x: jax.Array, mask: jax.Array, key: jax.Array

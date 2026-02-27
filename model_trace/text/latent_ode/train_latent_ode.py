@@ -43,6 +43,7 @@ class Config:
     d_encoder: int = field(default=128)    # encoder hidden dim
     d_z: int = field(default=64)           # latent ODE dim
     d_ode_hidden: int = field(default=128) # ODE MLP hidden dim
+    d_decoder_depth: int = field(default=2) # decoder MLP depth
     beta: float = field(default=1.0)       # KL weight in ELBO
     
     # training
@@ -52,7 +53,13 @@ class Config:
     n_epochs: int = field(default=10)
     log_steps: int = field(default=10)
     lr: float = field(default=1e-3)
+
+    # eval
     n_decode_examples: int = field(default=1)  # SONAR decode examples after eval
+    eval_sampled: bool = field(default=False)  # use sampled z0 for test MSE
+    sonar_sampler: str = field(default="beam")  # SONAR text decoding: "beam", "top_p", "top_k"
+    sonar_top_p: float = field(default=0.99)    # p value for top_p / nucleus sampler
+    sonar_top_k: int = field(default=50)        # k value for top_k sampler
 
 
 # ---------------------------------------------------------------------------
@@ -228,20 +235,55 @@ def reconstruct_batch(model: LatentODE, padded: jax.Array, mask: jax.Array, ts: 
     return jax.vmap(single)(padded, mask)
 
 
+@eqx.filter_jit
+def reconstruct_batch_sampled(
+    model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array, keys: jax.Array
+):
+    """Reconstruct embeddings through the ODE (sampled z0).
+
+    Returns:
+        x_hat: (B, T_max, D) reconstructed embeddings
+    """
+    def single(x, m, key):
+        z0, _, _ = model.encode(x, m, key)
+        zs = model.solve(z0, ts)
+        return model.decode(zs)
+
+    return jax.vmap(single)(padded, mask, keys)
+
+
+def build_sonar_sampler(config: Config):
+    """Build a fairseq2 sampler from config, or None for beam search."""
+    if config.sonar_sampler == "beam":
+        return None
+    elif config.sonar_sampler == "top_p":
+        from fairseq2.generation import TopPSampler
+        return TopPSampler(config.sonar_top_p)
+    elif config.sonar_sampler == "top_k":
+        from fairseq2.generation import TopKSampler
+        return TopKSampler(config.sonar_top_k)
+    else:
+        raise ValueError(f"Unknown sonar_sampler: {config.sonar_sampler!r}. Use 'beam', 'top_p', or 'top_k'.")
+
+
 def decode_examples(
     model: LatentODE,
     embedder: SonarEmbedder,
     loader: DataLoader,
     n_examples: int,
+    sampled: bool = False,
+    rng_key: jax.Array | None = None,
+    sonar_sampler=None,
 ):
     """Reconstruct test trajectories through the ODE and decode with SONAR.
 
     For each example trace, prints the SONAR-decoded text of the original
     embeddings side-by-side with the ODE-reconstructed embeddings.
     """
+    mode = "sampled z0~q" if sampled else "deterministic z0=mu"
     collected = 0
     print(f"\n{'=' * 70}")
-    print("SONAR DECODE EXAMPLES (original vs ODE-reconstructed)")
+    print(f"SONAR DECODE EXAMPLES ({mode})")
     print("=" * 70)
 
     for padded, mask, lengths, ts in loader:
@@ -249,7 +291,13 @@ def decode_examples(
         mask_jax = jnp.array(mask.numpy())
         ts_jax = jnp.array(ts.numpy())
 
-        x_hat = reconstruct_batch(model, padded_jax, mask_jax, ts_jax)
+        if sampled:
+            rng_key, subkey = jax.random.split(rng_key)
+            keys = jax.random.split(subkey, padded.shape[0])
+            x_hat = reconstruct_batch_sampled(model, padded_jax, mask_jax, ts_jax, keys)
+        else:
+            x_hat = reconstruct_batch(model, padded_jax, mask_jax, ts_jax)
+
         x_hat_np = np.array(x_hat)
         padded_np = padded.numpy()
         lengths_np = lengths.numpy()
@@ -261,8 +309,8 @@ def decode_examples(
             orig_emb = padded_np[i, :T]      # (T, D)
             recon_emb = x_hat_np[i, :T]       # (T, D)
 
-            orig_text = embedder.decode(orig_emb.astype(np.float32))
-            recon_text = embedder.decode(recon_emb.astype(np.float32))
+            orig_text = embedder.decode(orig_emb.astype(np.float32), sampler=sonar_sampler)
+            recon_text = embedder.decode(recon_emb.astype(np.float32), sampler=sonar_sampler)
 
             collected += 1
             print(f"\n--- Example {collected} ({T} segments) ---")
@@ -384,16 +432,23 @@ def main():
 
     # Evaluation on test set
     print("Evaluating on test set...")
-    test_mse = evaluate(model, test_loader)
-    test_mse_sampled = evaluate_sampled(model, test_loader, key)
-    writer.add_scalar("mse/test_deterministic", test_mse, config.n_epochs)
-    writer.add_scalar("mse/test_sampled", test_mse_sampled, config.n_epochs)
-    print(f"Test MSE (deterministic, z0=mu): {test_mse:.6f}")
-    print(f"Test MSE (sampled, z0~q):        {test_mse_sampled:.6f}")
+    if config.eval_sampled:
+        test_mse = evaluate_sampled(model, test_loader, key)
+        writer.add_scalar("mse/test", test_mse, config.n_epochs)
+        print(f"Test MSE (sampled, z0~q): {test_mse:.6f}")
+    else:
+        test_mse = evaluate(model, test_loader)
+        writer.add_scalar("mse/test", test_mse, config.n_epochs)
+        print(f"Test MSE (deterministic, z0=mu): {test_mse:.6f}")
 
     # Decode examples with SONAR
     if config.embed_type == "sonar" and config.n_decode_examples > 0:
-        decode_examples(model, embedder, test_loader, config.n_decode_examples)
+        sonar_sampler = build_sonar_sampler(config)
+        decode_examples(
+            model, embedder, test_loader, config.n_decode_examples,
+            sampled=config.eval_sampled, rng_key=key,
+            sonar_sampler=sonar_sampler,
+        )
 
     writer.close()
 
