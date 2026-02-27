@@ -22,7 +22,7 @@ from latent_ode import LatentODE, elbo_batch
 
 
 # ---------------------------------------------------------------------------
-# Embedding normalizer (LCM §2.3.1)
+# Embedding normalizer
 # ---------------------------------------------------------------------------
 
 class EmbeddingNormalizer:
