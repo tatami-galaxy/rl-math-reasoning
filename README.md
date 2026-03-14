@@ -1,0 +1,3 @@
+While often leading to correct conclusions, traces can be sub-optimally long and their semantics might not accurately reflect underlying computations. They do contain some useful signals since doing SFT on them helps new models learn how to reason.
+
+Can we try to model these traces in a way that captures the useful signals they contain? If so, can we then use such a model to efficiently teach new models how to reason?
