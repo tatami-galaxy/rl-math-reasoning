@@ -22,6 +22,48 @@ from latent_ode import LatentODE, elbo_batch
 
 
 # ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Config:
+
+    # data
+    dataset_name: str = field(default="Ujan/deepmath_trace_2")
+    dataset_split: str = field(default="train")
+    embed_type: str = field(default="sonar")
+    normalize_embeddings: bool = field(default=False)  # scaler on SONAR embeddings
+    embed_model: str = field(default="sentence-transformers/all-MiniLM-L6-v2")
+    device: str = field(default="cuda")
+    min_segments: int = field(default=10)
+    embed_batch_size: int = field(default=256)
+    segment_by: str = field(default="\n\n")
+
+    # model
+    d_proj: int = field(default=128)         # input projection dim
+    d_encoder: int = field(default=128)      # encoder hidden dim
+    d_z: int = field(default=64)             # latent ODE dim
+    d_ode_hidden: int = field(default=128)   # ODE MLP hidden dim
+    d_decoder_depth: int = field(default=2)  # decoder MLP depth
+    beta: float = field(default=1.0)         # KL weight in ELBO
+
+    # training
+    seed: int = field(default=42)
+    test_size: float = field(default=0.1) 
+    train_batch_size: int = field(default=32)
+    max_steps: int = field(default=100)
+    log_steps: int = field(default=10)
+    lr: float = field(default=1e-3)
+
+    # eval
+    n_decode_examples: int = field(default=1)   # SONAR decode examples after eval
+    eval_sampled: bool = field(default=False)   # use sampled z0 for test MSE
+    sonar_sampler: str = field(default="beam")  # SONAR text decoding: "beam", "top_p", "top_k"
+    sonar_top_p: float = field(default=0.99)    # p value for top_p / nucleus sampler
+    sonar_top_k: int = field(default=50)        # k value for top_k sampler
+
+
+# ---------------------------------------------------------------------------
 # Embedding normalizer
 # ---------------------------------------------------------------------------
 
@@ -61,48 +103,6 @@ class EmbeddingNormalizer:
         norm.median = data["median"]
         norm.scale = data["scale"]
         return norm
-
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
-@dataclass
-class Config:
-
-    # data
-    dataset_name: str = field(default="Ujan/deepmath_trace_2")
-    dataset_split: str = field(default="train")
-    embed_type: str = field(default="sonar")
-    normalize_embeddings: bool = field(default=False)  # scaler on SONAR embeddings
-    embed_model: str = field(default="sentence-transformers/all-MiniLM-L6-v2")
-    device: str = field(default="cuda")
-    min_segments: int = field(default=10)
-    embed_batch_size: int = field(default=256)
-    segment_by: str = field(default="\n\n")
-
-    # model
-    d_proj: int = field(default=128)         # input projection dim
-    d_encoder: int = field(default=128)      # encoder hidden dim
-    d_z: int = field(default=64)             # latent ODE dim
-    d_ode_hidden: int = field(default=128)   # ODE MLP hidden dim
-    d_decoder_depth: int = field(default=2)  # decoder MLP depth
-    beta: float = field(default=1.0)         # KL weight in ELBO
-
-    # training
-    seed: int = field(default=42)
-    test_size: float = field(default=0.1) 
-    train_batch_size: int = field(default=32)
-    n_epochs: int = field(default=10)
-    log_steps: int = field(default=10)
-    lr: float = field(default=1e-3)
-
-    # eval
-    n_decode_examples: int = field(default=1)   # SONAR decode examples after eval
-    eval_sampled: bool = field(default=False)   # use sampled z0 for test MSE
-    sonar_sampler: str = field(default="beam")  # SONAR text decoding: "beam", "top_p", "top_k"
-    sonar_top_p: float = field(default=0.99)    # p value for top_p / nucleus sampler
-    sonar_top_k: int = field(default=50)        # k value for top_k sampler
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ def main():
     # get root dir
     root = get_root_dir()
     # output dir
-    output_dir = root + "/models/ode/" + config.dataset_name.split("/")[-1]
+    output_dir = root + "/models/latent_ode/" + config.dataset_name.split("/")[-1]
     print(f"Output dir: {output_dir}")
 
     # Embedder
@@ -452,13 +452,15 @@ def main():
 
     # Training loop
     writer = SummaryWriter(log_dir=output_dir)
-    global_step = 1
-    print("Starting training...")
-    for epoch in range(config.n_epochs):
-        epoch_loss, epoch_recon, epoch_kl = 0.0, 0.0, 0.0
-        n_batches = 0
-
+    global_step = 0
+    done = False
+    print(f"Starting training for {config.max_steps} steps...")
+    while not done:
         for padded, mask, _, ts in loader:
+            if global_step >= config.max_steps:
+                done = True
+                break
+
             B = padded.shape[0]
             key, subkey = jax.random.split(key)
             keys = jax.random.split(subkey, B)
@@ -470,45 +472,30 @@ def main():
             model, opt_state, loss, recon, kl = train_step(
                 model, opt_state, padded_jax, mask_jax, ts_jax, keys
             )
+            global_step += 1
+
             batch_loss = float(loss)
             batch_recon = float(recon)
             batch_kl = float(kl)
-            epoch_loss += batch_loss
-            epoch_recon += batch_recon
-            epoch_kl += batch_kl
-            n_batches += 1
 
             if global_step % config.log_steps == 0:
-                writer.add_scalar("loss/batch", batch_loss, global_step)
-                writer.add_scalar("loss/recon_batch", batch_recon, global_step)
-                writer.add_scalar("loss/kl_batch", batch_kl, global_step)
+                writer.add_scalar("loss/step", batch_loss, global_step)
+                writer.add_scalar("loss/recon_step", batch_recon, global_step)
+                writer.add_scalar("loss/kl_step", batch_kl, global_step)
                 print(
-                    f"  step {global_step}  "
+                    f"  step {global_step}/{config.max_steps}  "
                     f"loss={batch_loss:.4f}  recon={batch_recon:.4f}  kl={batch_kl:.4f}"
                 )
-
-            global_step += 1
-
-        epoch_avg_loss = epoch_loss / n_batches
-        epoch_avg_recon = epoch_recon / n_batches
-        epoch_avg_kl = epoch_kl / n_batches
-        writer.add_scalar("loss/epoch", epoch_avg_loss, epoch)
-        writer.add_scalar("loss/recon_epoch", epoch_avg_recon, epoch)
-        writer.add_scalar("loss/kl_epoch", epoch_avg_kl, epoch)
-        print(
-            f"Epoch {epoch + 1}/{config.n_epochs}  "
-            f"loss={epoch_avg_loss:.4f}  recon={epoch_avg_recon:.4f}  kl={epoch_avg_kl:.4f}"
-        )
 
     # Evaluation on test set
     print("Evaluating on test set...")
     if config.eval_sampled:
         test_mse = evaluate_sampled(model, test_loader, key)
-        writer.add_scalar("mse/test", test_mse, config.n_epochs)
+        writer.add_scalar("mse/test", test_mse, config.max_steps)
         print(f"Test MSE (sampled, z0~q): {test_mse:.6f}")
     else:
         test_mse = evaluate(model, test_loader)
-        writer.add_scalar("mse/test", test_mse, config.n_epochs)
+        writer.add_scalar("mse/test", test_mse, config.max_steps)
         print(f"Test MSE (deterministic, z0=mu): {test_mse:.6f}")
 
     # Decode examples with SONAR

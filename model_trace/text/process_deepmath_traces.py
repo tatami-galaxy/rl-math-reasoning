@@ -1,3 +1,7 @@
+"""
+python process_deepmath_traces.py --hf_key 
+"""
+
 import sys
 sys.path.append('../../')
 
@@ -29,32 +33,35 @@ def main():
     hf_username = api.whoami()["name"]
 
     print(f"Loading dataset: {args.dataset_name} ({args.dataset_split} split)")
+    # ['question', 'final_answer', 'difficulty', 'topic', 'r1_solution_1', 'r1_solution_2', 'r1_solution_3']
     dataset = load_dataset(args.dataset_name, split=args.dataset_split)
 
-    # Keep only the columns we need
-    cols_to_keep = ["r1_solution_1", "r1_solution_2", "r1_solution_3", "difficulty"]
-    dataset = dataset.select_columns(cols_to_keep)
-
     # Merge the three solution columns into a single "trace" column.
-    # Each original row becomes 3 rows, each with the difficulty preserved.
+    # Each original row becomes 3 rows, with question prepended to the trace.
     def merge_solutions(batch):
-        traces, difficulties = [], []
-        for sol1, sol2, sol3, diff in zip(
+        traces, difficulties, final_answers, topics = [], [], [], []
+        for question, sol1, sol2, sol3, diff, ans, topic in zip(
+            batch["question"],
             batch["r1_solution_1"],
             batch["r1_solution_2"],
             batch["r1_solution_3"],
             batch["difficulty"],
+            batch["final_answer"],
+            batch["topic"],
         ):
-            for trace in (sol1, sol2, sol3):
-                traces.append(trace)
-                difficulties.append(diff)   # same diff for all traces
-        return {"trace": traces, "difficulty": difficulties}
+            for sol in (sol1, sol2, sol3):
+                traces.append(question + "\n\n" + sol)
+                difficulties.append(diff)
+                final_answers.append(ans)
+                topics.append(topic)
+        return {"trace": traces, "difficulty": difficulties,
+                "final_answer": final_answers, "topic": topics}
 
     print("Merging solution columns into 'trace'...")
     dataset = dataset.map(
         merge_solutions,
         batched=True,
-        remove_columns=cols_to_keep,
+        remove_columns=dataset.column_names,
     ).shuffle(seed=args.seed)
 
     # Group rows by difficulty bin
@@ -68,6 +75,8 @@ def main():
         clusters[cluster_key].append({
             "trace": row["trace"],
             "difficulty": difficulty,
+            "final_answer": row["final_answer"],
+            "topic": row["topic"],
         })
     # delete -1 cluster
     if -1 in clusters:
