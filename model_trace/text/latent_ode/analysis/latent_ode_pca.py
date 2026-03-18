@@ -1,6 +1,3 @@
-import sys
-sys.path.append('../../../')
-
 import os
 import json
 import argparse
@@ -14,9 +11,9 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
 
-from latent_ode import LatentODE
-from train_latent_ode import Config, build_dataset, collate_fn, EmbeddingNormalizer
-from embed import SentenceTransformerEmbedder
+from ..latent_ode import LatentODE
+from ..train_latent_ode import Config, build_dataset, collate_fn, EmbeddingNormalizer
+from ..embed import SentenceTransformerEmbedder
 
 
 # ---------------------------------------------------------------------------

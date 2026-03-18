@@ -1,6 +1,16 @@
-import sys
-sys.path.append('../../../')
-from utils import get_root_dir
+"""
+Run to cluster all deepmath traces into different difficulty levels 
+and upload to HF :
+python process_deepmath_traces.py --hf_key 
+
+Train latent ode : 
+CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.train_latent_ode \\
+    --dataset_name Ujan/deepmath_trace_2 --embed_type sonar --n_epochs 10
+CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.train_latent_ode.py \\
+    --dataset_name Ujan/deepmath_trace_3 --embed_type sonar --n_epochs 5 \\
+    --beta 1 --d_decoder_depth 5 --eval_sampled --normalize_embeddings
+"""
+
 from dataclasses import dataclass, field
 import os
 import json
@@ -17,8 +27,8 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from datasets import load_dataset
 from transformers import HfArgumentParser
 
-from embed import Embedder, SentenceTransformerEmbedder, SonarEmbedder
-from latent_ode import LatentODE, elbo_batch
+from .embed import Embedder, SentenceTransformerEmbedder, SonarEmbedder
+from .latent_ode import LatentODE, elbo_batch
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +54,9 @@ class Config:
     d_encoder: int = field(default=128)      # encoder hidden dim
     d_z: int = field(default=64)             # latent ODE dim
     d_ode_hidden: int = field(default=128)   # ODE MLP hidden dim
-    d_decoder_depth: int = field(default=2)  # decoder MLP depth
+    d_decoder_depth: int = field(default=3)  # decoder MLP depth
     beta: float = field(default=1.0)         # KL weight in ELBO
+    output_dir: str = field(default="models/latent_ode")
 
     # training
     seed: int = field(default=42)
@@ -380,11 +391,9 @@ def main():
     parser = HfArgumentParser(Config)
     config = parser.parse_args_into_dataclasses()[0]
 
-    # get root dir
-    root = get_root_dir()
     # output dir
-    output_dir = root + "/models/latent_ode/" + config.dataset_name.split("/")[-1]
-    print(f"Output dir: {output_dir}")
+    config.output_dir = config.output_dir + '/' + config.embed_type + '/'
+    config.output_dir = config.output_dir + config.dataset_name.split("/")[-1]
 
     # Embedder
     if config.embed_type == "sentence-transformers":
@@ -451,7 +460,7 @@ def main():
     train_step = make_train_step(optimizer, config.beta)
 
     # Training loop
-    writer = SummaryWriter(log_dir=output_dir)
+    writer = SummaryWriter(log_dir=config.output_dir)
     global_step = 0
     done = False
     print(f"Starting training for {config.max_steps} steps...")
@@ -511,15 +520,15 @@ def main():
     writer.close()
 
     # Save model, normalizer, and config
-    os.makedirs(output_dir, exist_ok=True)
-    eqx.tree_serialise_leaves(os.path.join(output_dir, "model.eqx"), model)
+    os.makedirs(config.output_dir, exist_ok=True)
+    eqx.tree_serialise_leaves(os.path.join(config.output_dir, "model.eqx"), model)
     if normalizer is not None:
-        normalizer.save(os.path.join(output_dir, "normalizer.npz"))
+        normalizer.save(os.path.join(config.output_dir, "normalizer.npz"))
     config_dict = vars(config)
     config_dict["d_embed"] = d_embed
-    with open(os.path.join(output_dir, "config.json"), "w") as f:
+    with open(os.path.join(config.output_dir, "config.json"), "w") as f:
         json.dump(config_dict, f, indent=2)
-    print(f"Model saved to {output_dir}")
+    print(f"Model saved to {config.output_dir}")
 
 
 if __name__ == "__main__":

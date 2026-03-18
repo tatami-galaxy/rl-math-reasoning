@@ -2,9 +2,6 @@
 python process_deepmath_traces.py --hf_key 
 """
 
-import sys
-sys.path.append('../../')
-
 import math
 from collections import defaultdict
 from dataclasses import dataclass, field
