@@ -39,7 +39,7 @@ from .latent_ode import LatentODE, elbo_batch
 class Config:
 
     # data
-    dataset_name: str = field(default="Ujan/deepmath_trace_2")
+    dataset_name: str = field(default="Ujan/deepmath_trace_3")
     dataset_split: str = field(default="train")
     embed_type: str = field(default="sonar")
     normalize_embeddings: bool = field(default=False)  # scaler on SONAR embeddings
@@ -64,7 +64,13 @@ class Config:
     train_batch_size: int = field(default=32)
     max_steps: int = field(default=100)
     log_steps: int = field(default=10)
+    save_steps: int = field(default=0)          # save checkpoint every N steps (0 = disabled)
     lr: float = field(default=1e-3)
+    max_grad_norm: float = field(default=1.0)        # global norm clipping
+    warmup_fraction: float = field(default=0.05)     # fraction of max_steps for warmup
+    lr_end_factor: float = field(default=0.01)       # lr decays to lr * lr_end_factor
+    curriculum_steps: int = field(default=0)          # steps to ramp from short to full trajectories (0 = disabled)
+    curriculum_start_frac: float = field(default=0.1) # initial fraction of trajectory length
 
     # eval
     n_decode_examples: int = field(default=1)   # SONAR decode examples after eval
@@ -384,6 +390,24 @@ def decode_examples(
 
 
 # ---------------------------------------------------------------------------
+# Checkpointing
+# ---------------------------------------------------------------------------
+
+def save_checkpoint(model, config, d_embed, normalizer, step):
+    """Save a model checkpoint at the given step."""
+    ckpt_dir = os.path.join(config.output_dir, f"checkpoint-{step}")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    eqx.tree_serialise_leaves(os.path.join(ckpt_dir, "model.eqx"), model)
+    if normalizer is not None:
+        normalizer.save(os.path.join(ckpt_dir, "normalizer.npz"))
+    config_dict = vars(config)
+    config_dict["d_embed"] = d_embed
+    with open(os.path.join(ckpt_dir, "config.json"), "w") as f:
+        json.dump(config_dict, f, indent=2)
+    print(f"Checkpoint saved to {ckpt_dir}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -454,8 +478,18 @@ def main():
     key, model_key = jax.random.split(key)
     model = LatentODE(d_embed, config, key=model_key)
 
-    # Optimizer
-    optimizer = optax.adam(config.lr)
+    # Optimizer with LR warmup + cosine decay and gradient clipping
+    schedule = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=config.lr,
+        warmup_steps=int(config.max_steps * config.warmup_fraction),
+        decay_steps=config.max_steps,
+        end_value=config.lr * config.lr_end_factor,
+    )
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.adam(schedule),
+    )
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
     train_step = make_train_step(optimizer, config.beta)
 
@@ -465,7 +499,7 @@ def main():
     done = False
     print(f"Starting training for {config.max_steps} steps...")
     while not done:
-        for padded, mask, _, ts in loader:
+        for padded, mask, lengths, ts in loader:
             if global_step >= config.max_steps:
                 done = True
                 break
@@ -473,6 +507,15 @@ def main():
             B = padded.shape[0]
             key, subkey = jax.random.split(key)
             keys = jax.random.split(subkey, B)
+
+            # Curriculum: truncate trajectories to a growing fraction
+            if config.curriculum_steps > 0 and global_step < config.curriculum_steps:
+                frac = config.curriculum_start_frac + (
+                    (1.0 - config.curriculum_start_frac) * global_step / config.curriculum_steps
+                )
+                effective_lengths = (lengths.float() * frac).clamp(min=2).long()
+                for i in range(B):
+                    mask[i, effective_lengths[i]:] = False
 
             padded_jax = jnp.array(padded.numpy())
             mask_jax = jnp.array(mask.numpy())
@@ -495,6 +538,9 @@ def main():
                     f"  step {global_step}/{config.max_steps}  "
                     f"loss={batch_loss:.4f}  recon={batch_recon:.4f}  kl={batch_kl:.4f}"
                 )
+
+            if config.save_steps > 0 and global_step % config.save_steps == 0:
+                save_checkpoint(model, config, d_embed, normalizer, global_step)
 
     # Evaluation on test set
     print("Evaluating on test set...")
@@ -519,16 +565,8 @@ def main():
 
     writer.close()
 
-    # Save model, normalizer, and config
-    os.makedirs(config.output_dir, exist_ok=True)
-    eqx.tree_serialise_leaves(os.path.join(config.output_dir, "model.eqx"), model)
-    if normalizer is not None:
-        normalizer.save(os.path.join(config.output_dir, "normalizer.npz"))
-    config_dict = vars(config)
-    config_dict["d_embed"] = d_embed
-    with open(os.path.join(config.output_dir, "config.json"), "w") as f:
-        json.dump(config_dict, f, indent=2)
-    print(f"Model saved to {config.output_dir}")
+    # Save final model
+    save_checkpoint(model, config, d_embed, normalizer, global_step)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ reconstructed embeddings, and plots error-vs-timestep curves.
 
 Usage:
     python -m model_trace.text.latent_ode.analysis.recon_quality \
-        --model_dir models/latent_ode/deepmath_trace_3 \
+        --model_dir models/latent_ode/sentence-transformers/deepmath_trace_3 \
         --eval_sampled
 """
 
