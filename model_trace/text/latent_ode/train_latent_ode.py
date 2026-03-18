@@ -4,9 +4,9 @@ and upload to HF :
 python process_deepmath_traces.py --hf_key 
 
 Train latent ode : 
-CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.train_latent_ode \\
+CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode \\
     --dataset_name Ujan/deepmath_trace_2 --embed_type sonar --n_epochs 10
-CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.train_latent_ode.py \\
+CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode.py \\
     --dataset_name Ujan/deepmath_trace_3 --embed_type sonar --n_epochs 5 \\
     --beta 1 --d_decoder_depth 5 --eval_sampled --normalize_embeddings
 """
