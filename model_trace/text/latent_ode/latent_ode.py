@@ -77,7 +77,8 @@ class Decoder(eqx.Module):
             out_size=d_embed,
             width_size=d_z * 2,
             depth=depth,
-            activation=jax.nn.tanh,
+            #activation=jax.nn.tanh,
+            activation=jax.nn.gelu,
             key=key,
         )
 

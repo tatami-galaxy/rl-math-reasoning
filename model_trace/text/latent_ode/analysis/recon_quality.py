@@ -224,6 +224,7 @@ def main():
     parser.add_argument("--dataset_split", default="train", help="Dataset split to evaluate on")
     parser.add_argument("--eval_sampled", action="store_true", help="Use sampled z0 instead of deterministic mu")
     parser.add_argument("--max_traces", type=int, default=500, help="Max traces to evaluate")
+    parser.add_argument("--filter_topic", type=str, default="", help="Filter traces by Topic 1 (e.g. 'Algebra')")
     args = parser.parse_args()
 
     # Load model
@@ -248,6 +249,7 @@ def main():
     # Override dataset from CLI args
     config.dataset_name = args.dataset_name
     config.dataset_split = args.dataset_split
+    config.filter_topic = args.filter_topic
 
     # Dataset
     dataset = build_dataset(config, embedder)

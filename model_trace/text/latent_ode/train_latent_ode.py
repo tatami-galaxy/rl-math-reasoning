@@ -46,6 +46,7 @@ class Config:
     embed_model: str = field(default="sentence-transformers/all-MiniLM-L6-v2")
     device: str = field(default="cuda")
     min_segments: int = field(default=10)
+    filter_topic: str = field(default="")         # filter traces by Topic 1 (e.g. "Algebra"); empty = no filter
     embed_batch_size: int = field(default=256)
     segment_by: str = field(default="\n\n")
 
@@ -168,9 +169,26 @@ def collate_fn(batch: list[torch.Tensor]):
     return padded, mask, lengths, ts
 
 
+def filter_by_topic(hf_dataset, topic: str):
+    """Filter dataset rows whose 'topic' column matches the given Topic 1.
+
+    The topic column has the format "Mathematics -> Topic 1 -> ... -> Topic n".
+    This extracts Topic 1 (the second component) and keeps rows where it matches.
+    """
+    def matches(row):
+        parts = [p.strip() for p in row["topic"].split("->")]
+        return len(parts) >= 2 and parts[1] == topic
+    filtered = hf_dataset.filter(matches)
+    print(f"Filtered by topic '{topic}': {len(filtered)}/{len(hf_dataset)} traces")
+    return filtered
+
+
 def build_dataset(config: Config, embedder: Embedder) -> TraceDataset:
     print(f"Loading {config.dataset_name} ({config.dataset_split})")
     hf_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
+
+    if config.filter_topic:
+        hf_dataset = filter_by_topic(hf_dataset, config.filter_topic)
 
     all_segments_lists: list[list[str]] = []
     for row in hf_dataset:
