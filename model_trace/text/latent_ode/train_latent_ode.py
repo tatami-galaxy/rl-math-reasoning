@@ -27,7 +27,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from datasets import load_dataset
 from transformers import HfArgumentParser
 
-from .embed import Embedder, SentenceTransformerEmbedder, SonarEmbedder
+from .embed import Embedder, SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
 from .latent_ode import LatentODE, elbo_batch
 
 
@@ -41,9 +41,10 @@ class Config:
     # data
     dataset_name: str = field(default="Ujan/deepmath_trace_3")
     dataset_split: str = field(default="train")
-    embed_type: str = field(default="sonar")
+    embed_type: str = field(default="qwen") # sonar, sentence-transformers, qwen
     normalize_embeddings: bool = field(default=False)  # scaler on SONAR embeddings
-    embed_model: str = field(default="sentence-transformers/all-MiniLM-L6-v2")
+    embed_model: str = field(default="Qwen/Qwen3-Embedding-0.6B") # sentence-transformers/all-MiniLM-L6-v2, Qwen/Qwen3-Embedding-0.6B
+    embed_instruction: str = field(default="Embed this mathematical reasoning segment")  # Qwen instruction prefix
     device: str = field(default="cuda")
     min_segments: int = field(default=10)
     filter_topic: str = field(default="")         # filter traces by Topic 1 (e.g. "Algebra"); empty = no filter
@@ -438,6 +439,9 @@ def main():
     config.output_dir = config.output_dir + config.dataset_name.split("/")[-1]
 
     # Embedder
+    if not config.embed_model:
+        raise ValueError("--embed_model is required (e.g. 'sentence-transformers/all-MiniLM-L6-v2', 'Qwen/Qwen3-Embedding-0.6B')")
+
     if config.embed_type == "sentence-transformers":
         embedder = SentenceTransformerEmbedder(
             model_name=config.embed_model,
@@ -448,6 +452,13 @@ def main():
         embedder = SonarEmbedder(
             device=config.device,
             batch_size=config.embed_batch_size,
+        )
+    elif config.embed_type == "qwen":
+        embedder = QwenEmbedder(
+            model_name=config.embed_model,
+            device=config.device,
+            batch_size=config.embed_batch_size,
+            instruction=config.embed_instruction,
         )
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")

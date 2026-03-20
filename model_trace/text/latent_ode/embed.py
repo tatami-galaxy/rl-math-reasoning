@@ -54,6 +54,75 @@ class SentenceTransformerEmbedder(Embedder):
         )
 
 
+class QwenEmbedder(Embedder):
+    """Embedder backed by Qwen3-Embedding models via transformers."""
+
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen3-Embedding-0.6B",
+        device: str = "cuda",
+        batch_size: int = 256,
+        max_seq_len: int = 512,
+        instruction: str = "Embed this mathematical reasoning segment",
+    ):
+        from transformers import AutoModel, AutoTokenizer
+
+        self.device = torch.device(device)
+        self.batch_size = batch_size
+        self.max_seq_len = max_seq_len
+        self.instruction = instruction
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        self.model.eval()
+        self._dim = self.model.config.hidden_size
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    def _last_token_pool(self, last_hidden_states, attention_mask):
+        """Pool by taking the last non-padding token's hidden state."""
+        left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
+        if left_padding:
+            return last_hidden_states[:, -1]
+        sequence_lengths = attention_mask.sum(dim=1) - 1
+        batch_size = last_hidden_states.shape[0]
+        return last_hidden_states[
+            torch.arange(batch_size, device=last_hidden_states.device),
+            sequence_lengths,
+        ]
+
+    def _format_texts(self, sentences: list[str]) -> list[str]:
+        """Prepend instruction prefix if set."""
+        if self.instruction:
+            return [
+                f"Instruct: {self.instruction}\nQuery: {s}" for s in sentences
+            ]
+        return sentences
+
+    @torch.no_grad()
+    def embed(self, sentences: list[str]) -> np.ndarray:
+        formatted = self._format_texts(sentences)
+        parts = []
+        for i in range(0, len(formatted), self.batch_size):
+            batch = formatted[i : i + self.batch_size]
+            inputs = self.tokenizer(
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=self.max_seq_len,
+                return_tensors="pt",
+            ).to(self.device)
+            outputs = self.model(**inputs)
+            emb = self._last_token_pool(outputs.last_hidden_state, inputs["attention_mask"])
+            emb = torch.nn.functional.normalize(emb, p=2, dim=1)
+            parts.append(emb.cpu().float().numpy())
+            print(f"  encoded {min(i + self.batch_size, len(sentences))}/{len(sentences)}", end="\r")
+        print()
+        return np.concatenate(parts, axis=0)
+
+
 class SonarEmbedder(Embedder):
     """Embedder backed by Meta's SONAR model. Supports encoding and decoding."""
 
