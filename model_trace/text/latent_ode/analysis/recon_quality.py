@@ -7,7 +7,7 @@ reconstructed embeddings, and plots error-vs-timestep curves.
 Usage:
     python -m model_trace.text.latent_ode.analysis.recon_quality \
         --model_dir models/latent_ode/sentence-transformers/deepmath_trace_3 \
-        --eval_sampled
+        --dataset_name Ujan/deepmath_trace_2 --eval_sampled
 """
 
 import os
@@ -28,7 +28,7 @@ from ..train_latent_ode import (
     collate_fn,
     EmbeddingNormalizer,
 )
-from ..embed import SentenceTransformerEmbedder, SonarEmbedder
+from ..embed import SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
 
 
 # ---------------------------------------------------------------------------
@@ -225,13 +225,23 @@ def main():
     parser.add_argument("--eval_sampled", action="store_true", help="Use sampled z0 instead of deterministic mu")
     parser.add_argument("--max_traces", type=int, default=500, help="Max traces to evaluate")
     parser.add_argument("--filter_topic", type=str, default="", help="Filter traces by Topic 1 (e.g. 'Algebra')")
+    parser.add_argument("--embed_batch_size", type=int, default=128, help="Batch size for embedding (override config)")
     args = parser.parse_args()
 
-    # Load model
-    print(f"Loading model from {args.model_dir}")
-    model, config, d_embed, normalizer = load_model(args.model_dir)
+    # Load config only (no JAX model yet — keep GPU free for embedder)
+    print(f"Loading config from {args.model_dir}")
+    with open(os.path.join(args.model_dir, "config.json")) as f:
+        config_dict = json.load(f)
+    d_embed = config_dict.pop("d_embed")
+    config = Config(**config_dict)
 
-    # Embedder
+    # Override config from CLI args
+    config.dataset_name = args.dataset_name
+    config.dataset_split = args.dataset_split
+    config.filter_topic = args.filter_topic
+    config.embed_batch_size = args.embed_batch_size
+
+    # Embedder — run on GPU first, then free before loading JAX model
     if config.embed_type == "sentence-transformers":
         embedder = SentenceTransformerEmbedder(
             model_name=config.embed_model,
@@ -243,16 +253,35 @@ def main():
             device=config.device,
             batch_size=config.embed_batch_size,
         )
+    elif config.embed_type == "qwen":
+        embedder = QwenEmbedder(
+            model_name=config.embed_model,
+            device=config.device,
+            batch_size=config.embed_batch_size,
+            instruction=config.embed_instruction,
+        )
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    # Override dataset from CLI args
-    config.dataset_name = args.dataset_name
-    config.dataset_split = args.dataset_split
-    config.filter_topic = args.filter_topic
-
-    # Dataset
+    # Dataset — embed everything while embedder owns the GPU
     dataset = build_dataset(config, embedder)
+
+    # Free embedder GPU memory before loading JAX model
+    del embedder
+    import torch
+    torch.cuda.empty_cache()
+
+    # Now load JAX model + normalizer
+    print(f"Loading model from {args.model_dir}")
+    skeleton = LatentODE(d_embed, config, key=jax.random.PRNGKey(0))
+    model = eqx.tree_deserialise_leaves(
+        os.path.join(args.model_dir, "model.eqx"), skeleton
+    )
+
+    normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
+    normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
+    if normalizer is not None:
+        print("Loaded normalizer from", normalizer_path)
 
     if normalizer is not None:
         print("Applying normalizer to embeddings...")
@@ -260,7 +289,6 @@ def main():
             dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
 
     if args.max_traces < len(dataset):
-        import torch
         indices = np.random.default_rng(0).choice(len(dataset), args.max_traces, replace=False)
         dataset = torch.utils.data.Subset(dataset, indices.tolist())
 
