@@ -9,6 +9,9 @@ CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode \\
 CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode \\
     --dataset_name Ujan/deepmath_trace_3 --embed_type sonar \\
     --beta 1 --d_decoder_depth 5 --eval_sampled --normalize_embeddings
+CUDA_VISIBLE_DEVICES=7 python -m model_trace.text.latent_ode.train_latent_ode \\
+    --beta 0.1 --max_steps 500 --save_steps 100 --curriculum_steps 100 \\
+    --curriculum_start_frac 0.2  --filter_topic Algebra --dataset_name Ujan/deepmath_trace_3
 """
 
 from dataclasses import dataclass, field
@@ -437,6 +440,7 @@ def main():
     # output dir
     config.output_dir = config.output_dir + '/' + config.embed_type + '/'
     config.output_dir = config.output_dir + config.dataset_name.split("/")[-1]
+    if config.filter_topic: config.output_dir = config.output_dir + '_' + config.filter_topic
 
     # Embedder
     if not config.embed_model:
