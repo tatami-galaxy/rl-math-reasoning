@@ -11,6 +11,7 @@ Usage:
     python -m model_trace.text.latent_ode.analysis.field_properties \
         --model_dir models/latent_ode/qwen/deepmath_trace_3 \
         --dataset_name Ujan/deepmath_trace_3 \
+        --filter_topic Algebra \
         --properties speed
 """
 
