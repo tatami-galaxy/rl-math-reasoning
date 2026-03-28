@@ -263,8 +263,8 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    # Dataset — embed everything while embedder owns the GPU
-    dataset = build_dataset(config, embedder)
+    # Dataset — embed only what we need while embedder owns the GPU
+    dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     # Free embedder GPU memory before loading JAX model
     del embedder
@@ -282,15 +282,9 @@ def main():
     normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
     if normalizer is not None:
         print("Loaded normalizer from", normalizer_path)
-
-    if normalizer is not None:
         print("Applying normalizer to embeddings...")
         for i in range(len(dataset.embeddings)):
             dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
-
-    if args.max_traces < len(dataset):
-        indices = np.random.default_rng(0).choice(len(dataset), args.max_traces, replace=False)
-        dataset = torch.utils.data.Subset(dataset, indices.tolist())
 
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,

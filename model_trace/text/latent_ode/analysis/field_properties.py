@@ -24,6 +24,7 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from ..latent_ode import LatentODE
@@ -34,7 +35,6 @@ from ..train_latent_ode import (
     EmbeddingNormalizer,
 )
 from ..embed import SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
-from .recon_quality import load_model
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ def extract_latent_trajectories(
     zs_all = []
     lengths_all = []
 
-    for padded, mask, lengths, ts in loader:
+    for padded, mask, lengths, ts in tqdm(loader, desc="Extracting trajectories"):
         padded_jax = jnp.array(padded.numpy())
         mask_jax = jnp.array(mask.numpy())
         ts_jax = jnp.array(ts.numpy())
@@ -126,7 +126,7 @@ def compute_speed(
     _speed_batch = jax.jit(jax.vmap(_speed_single))
 
     speeds = []
-    for zs in zs_all:
+    for zs in tqdm(zs_all, desc="Computing speed"):
         s = _speed_batch(jnp.array(zs))
         speeds.append(np.array(s))
 
@@ -194,6 +194,41 @@ def aggregate_by_normalized_position(
 
 
 # ---------------------------------------------------------------------------
+# Segment-level speed display
+# ---------------------------------------------------------------------------
+
+def show_speed_by_segment(
+    speeds: list[np.ndarray],
+    dataset,                        # TraceDataset with .segments populated
+    indices: list[int],
+    seg_width: int = 100,
+) -> None:
+    """Print each segment alongside its speed value for the given trace indices.
+
+    Args:
+        speeds:   list of (T_i,) speed arrays, aligned with dataset
+        dataset:  TraceDataset; must have .segments set
+        indices:  which traces to display
+        seg_width: max characters to show per segment
+    """
+    if dataset.segments is None:
+        raise ValueError("dataset.segments is None — rebuild with build_dataset (segments are now stored automatically)")
+
+    for idx in indices:
+        segs = dataset.segments[idx]
+        spds = speeds[idx]
+        T = len(segs)
+        print(f"\n{'─' * 70}")
+        print(f"Trace {idx}  ({T} segments)")
+        print(f"{'─' * 70}")
+        print(f"  {'t':>3s}  {'speed':>8s}  segment")
+        print(f"  {'─'*3}  {'─'*8}  {'─'*seg_width}")
+        for t in range(T):
+            text = segs[t].replace("\n", " ")[:seg_width]
+            print(f"  {t:3d}  {spds[t]:8.4f}  {text}")
+
+
+# ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
 
@@ -209,7 +244,7 @@ def plot_speed(
     save_path: str | None = None,
     min_samples: int = 5,
 ):
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    _, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Speed vs absolute timestep
     ax = axes[0]
@@ -267,6 +302,8 @@ def main():
     parser.add_argument("--properties", nargs="+", default=["speed"],
                         choices=["speed"],
                         help="Which field properties to compute")
+    parser.add_argument("--n_show", type=int, default=0,
+                        help="Number of traces to show segment-level speed for (0 = disabled)")
     args = parser.parse_args()
 
     # Load config (no JAX model yet — keep GPU free for embedder)
@@ -303,7 +340,7 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    dataset = build_dataset(config, embedder)
+    dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     del embedder
     import torch
@@ -322,10 +359,6 @@ def main():
         print("Loaded normalizer from", normalizer_path)
         for i in range(len(dataset.embeddings)):
             dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
-
-    if args.max_traces < len(dataset):
-        indices = np.random.default_rng(0).choice(len(dataset), args.max_traces, replace=False)
-        dataset = torch.utils.data.Subset(dataset, indices.tolist())
 
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,
@@ -392,6 +425,11 @@ def main():
         with open(metrics_path, "w") as f:
             json.dump(metrics, f, indent=2)
         print(f"Saved metrics to {metrics_path}")
+
+        # Segment-level speed display
+        if args.n_show > 0:
+            show_indices = list(range(min(args.n_show, len(speeds))))
+            show_speed_by_segment(speeds, dataset, show_indices)
 
 
 if __name__ == "__main__":

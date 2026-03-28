@@ -165,18 +165,13 @@ def main():
     # can have test samples too
     # this should be fine if model does not overfit
     # check test MSE first
-    dataset = build_dataset(config, embedder)
+    dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     # Apply normalizer so embeddings match the space the model was trained in
     if normalizer is not None:
         print("Applying normalizer to embeddings...")
         for i in range(len(dataset.embeddings)):
             dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
-
-    # Optionally subsample for speed
-    if args.max_traces < len(dataset):
-        indices = np.random.default_rng(0).choice(len(dataset), args.max_traces, replace=False)
-        dataset = torch.utils.data.Subset(dataset, indices.tolist())
 
     loader = DataLoader(dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn)
 

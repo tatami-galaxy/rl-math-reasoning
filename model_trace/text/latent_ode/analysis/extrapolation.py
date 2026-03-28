@@ -458,7 +458,7 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    dataset = build_dataset(config, embedder)
+    dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     # Free embedder GPU memory before loading JAX model
     del embedder
@@ -478,10 +478,6 @@ def main():
         print("Loaded normalizer from", normalizer_path)
         for i in range(len(dataset.embeddings)):
             dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
-
-    if args.max_traces < len(dataset):
-        indices = np.random.default_rng(0).choice(len(dataset), args.max_traces, replace=False)
-        dataset = torch.utils.data.Subset(dataset, indices.tolist())
 
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,

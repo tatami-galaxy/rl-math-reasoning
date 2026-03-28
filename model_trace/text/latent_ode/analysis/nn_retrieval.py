@@ -288,18 +288,12 @@ def main():
     config.filter_topic = args.filter_topic
 
     # Dataset
-    dataset = build_dataset(config, embedder)
+    dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     if normalizer is not None:
         print("Applying normalizer to embeddings...")
         for i in range(len(dataset.embeddings)):
             dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
-
-    # Subsample if needed
-    if args.max_traces < len(dataset):
-        import torch
-        indices = np.random.default_rng(0).choice(len(dataset), args.max_traces, replace=False).tolist()
-        dataset = torch.utils.data.Subset(dataset, indices)
 
     # Build corpus: flatten all embeddings into (N_total, D)
     corpus = build_corpus(dataset)

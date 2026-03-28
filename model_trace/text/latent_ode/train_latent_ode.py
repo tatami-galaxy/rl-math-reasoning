@@ -139,8 +139,9 @@ def split_trace(trace: str, segment_by: str) -> list[str]:
 class TraceDataset(Dataset):
     """Each item is a (T_i, D) float32 tensor — one trajectory per trace."""
 
-    def __init__(self, embeddings: list[np.ndarray]):
+    def __init__(self, embeddings: list[np.ndarray], segments: list[list[str]] | None = None):
         self.embeddings = embeddings
+        self.segments = segments  # optional: list of segment text lists, aligned with embeddings
 
     def __len__(self) -> int:
         return len(self.embeddings)
@@ -187,7 +188,7 @@ def filter_by_topic(hf_dataset, topic: str):
     return filtered
 
 
-def build_dataset(config: Config, embedder: Embedder) -> TraceDataset:
+def build_dataset(config: Config, embedder: Embedder, max_traces: int | None = None) -> TraceDataset:
     print(f"Loading {config.dataset_name} ({config.dataset_split})")
     hf_dataset = load_dataset(config.dataset_name, split=config.dataset_split)
 
@@ -205,6 +206,11 @@ def build_dataset(config: Config, embedder: Embedder) -> TraceDataset:
         f"(min_segments={config.min_segments})"
     )
 
+    if max_traces is not None and max_traces < len(all_segments_lists):
+        indices = np.random.default_rng(0).choice(len(all_segments_lists), max_traces, replace=False)
+        all_segments_lists = [all_segments_lists[i] for i in indices]
+        print(f"Subsampled to {len(all_segments_lists)} traces (max_traces={max_traces})")
+
     lengths = [len(s) for s in all_segments_lists]
     flat_segments = [s for segs in all_segments_lists for s in segs]
 
@@ -214,7 +220,10 @@ def build_dataset(config: Config, embedder: Embedder) -> TraceDataset:
     split_indices = np.cumsum(lengths)[:-1]
     per_trace = np.split(flat_embeddings, split_indices)  # list of (T_i, D)
 
-    return TraceDataset([arr.astype(np.float32) for arr in per_trace])
+    return TraceDataset(
+        [arr.astype(np.float32) for arr in per_trace],
+        segments=all_segments_lists,
+    )
 
 
 # ---------------------------------------------------------------------------
