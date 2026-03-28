@@ -134,6 +134,39 @@ def compute_speed(
 
 
 # ---------------------------------------------------------------------------
+# 2. Divergence: tr(df/dz)
+# ---------------------------------------------------------------------------
+
+def compute_divergence(
+    model: LatentODE, zs_all: list[np.ndarray],
+) -> list[np.ndarray]:
+    """Compute div f(z) = tr(J) at each timestep for each trajectory.
+
+    The Jacobian J = df/dz is a (d_z, d_z) matrix. For d_z=64 this is
+    cheap to compute exactly via jax.jacrev.
+
+    Returns:
+        divs: list of (T_i,) arrays — divergence at each step
+               positive = locally expanding, negative = locally contracting
+    """
+    ode_fn = model.ode_func
+
+    @eqx.filter_jit
+    def _div_single(z: jax.Array) -> jax.Array:
+        J = jax.jacrev(lambda z_: ode_fn(0.0, z_, None))(z)  # (d_z, d_z)
+        return jnp.trace(J)
+
+    _div_batch = jax.jit(jax.vmap(_div_single))
+
+    divs = []
+    for zs in tqdm(zs_all, desc="Computing divergence"):
+        d = _div_batch(jnp.array(zs))
+        divs.append(np.array(d))
+
+    return divs
+
+
+# ---------------------------------------------------------------------------
 # Aggregation helpers
 # ---------------------------------------------------------------------------
 
@@ -229,6 +262,35 @@ def show_speed_by_segment(
 
 
 # ---------------------------------------------------------------------------
+# Segment-level divergence display
+# ---------------------------------------------------------------------------
+
+def show_divergence_by_segment(
+    divs: list[np.ndarray],
+    dataset,
+    indices: list[int],
+    seg_width: int = 100,
+) -> None:
+    """Print each segment alongside its divergence value for the given trace indices."""
+    if dataset.segments is None:
+        raise ValueError("dataset.segments is None — rebuild with build_dataset")
+
+    for idx in indices:
+        segs = dataset.segments[idx]
+        dvs = divs[idx]
+        T = len(segs)
+        print(f"\n{'─' * 70}")
+        print(f"Trace {idx}  ({T} segments)")
+        print(f"{'─' * 70}")
+        print(f"  {'t':>3s}  {'div(f)':>10s}  segment")
+        print(f"  {'─'*3}  {'─'*10}  {'─'*seg_width}")
+        for t in range(T):
+            text = segs[t].replace("\n", " ")[:seg_width]
+            sign = "+" if dvs[t] >= 0 else ""
+            print(f"  {t:3d}  {sign}{dvs[t]:9.4f}  {text}")
+
+
+# ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
 
@@ -283,6 +345,59 @@ def plot_speed(
     plt.show()
 
 
+def plot_divergence(
+    positions: np.ndarray,
+    means: np.ndarray,
+    stds: np.ndarray,
+    counts: np.ndarray,
+    norm_centers: np.ndarray,
+    norm_means: np.ndarray,
+    norm_stds: np.ndarray,
+    norm_counts: np.ndarray,
+    save_path: str | None = None,
+    min_samples: int = 5,
+):
+    _, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Divergence vs absolute timestep
+    ax = axes[0]
+    valid = counts >= min_samples
+    ax.plot(positions[valid], means[valid], color="steelblue", linewidth=1.5)
+    ax.fill_between(
+        positions[valid],
+        (means - stds)[valid],
+        (means + stds)[valid],
+        alpha=0.2, color="steelblue",
+    )
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
+    ax.set_xlabel("Timestep (segment position)")
+    ax.set_ylabel("div f(z)")
+    ax.set_title("Divergence vs. timestep")
+    ax.grid(True, alpha=0.3)
+
+    # Divergence vs normalized position
+    ax = axes[1]
+    valid = norm_counts >= min_samples
+    ax.plot(norm_centers[valid], norm_means[valid], color="coral", linewidth=1.5)
+    ax.fill_between(
+        norm_centers[valid],
+        (norm_means - norm_stds)[valid],
+        (norm_means + norm_stds)[valid],
+        alpha=0.2, color="coral",
+    )
+    ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
+    ax.set_xlabel("Normalized position (t / T)")
+    ax.set_ylabel("div f(z)")
+    ax.set_title("Divergence vs. normalized position")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, dpi=150)
+        print(f"Saved plot to {save_path}")
+    plt.show()
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -300,7 +415,7 @@ def main():
     parser.add_argument("--filter_topic", type=str, default="")
     parser.add_argument("--embed_batch_size", type=int, default=128)
     parser.add_argument("--properties", nargs="+", default=["speed"],
-                        choices=["speed"],
+                        choices=["speed", "divergence"],
                         help="Which field properties to compute")
     parser.add_argument("--n_show", type=int, default=0,
                         help="Number of traces to show segment-level speed for (0 = disabled)")
@@ -430,6 +545,72 @@ def main():
         if args.n_show > 0:
             show_indices = list(range(min(args.n_show, len(speeds))))
             show_speed_by_segment(speeds, dataset, show_indices)
+
+    # --- Divergence ---
+    if "divergence" in args.properties:
+        print("Computing divergence tr(df/dz)...")
+        divs = compute_divergence(model, zs_all)
+
+        # Summary
+        all_divs = np.concatenate(divs)
+        n_positive = np.sum(all_divs > 0)
+        n_negative = np.sum(all_divs < 0)
+        print(f"\n--- Divergence summary ({len(lengths)} traces) ---")
+        print(f"  mean={all_divs.mean():.6f}  std={all_divs.std():.6f}  "
+              f"median={np.median(all_divs):.6f}")
+        print(f"  min={all_divs.min():.6f}  max={all_divs.max():.6f}")
+        print(f"  positive (expanding): {n_positive}/{len(all_divs)} "
+              f"({100*n_positive/len(all_divs):.1f}%)")
+        print(f"  negative (contracting): {n_negative}/{len(all_divs)} "
+              f"({100*n_negative/len(all_divs):.1f}%)")
+
+        # Aggregate by absolute timestep
+        pos, means, stds, counts = aggregate_by_timestep(divs, lengths)
+
+        print(f"\n--- Divergence vs timestep (first 20) ---")
+        print(f"  {'t':>4s}  {'mean':>10s}  {'std':>10s}  {'n':>6s}")
+        for t in range(min(20, len(pos))):
+            if counts[t] >= 2:
+                print(f"  {t:4d}  {means[t]:10.6f}  {stds[t]:10.6f}  {counts[t]:6d}")
+
+        # Aggregate by normalized position
+        norm_centers, norm_means, norm_stds, norm_counts = aggregate_by_normalized_position(
+            divs, lengths,
+        )
+
+        print(f"\n--- Divergence vs normalized position ---")
+        print(f"  {'pos':>6s}  {'mean':>10s}  {'std':>10s}  {'n':>6s}")
+        for b in range(len(norm_centers)):
+            if norm_counts[b] >= 2:
+                print(f"  {norm_centers[b]:6.2f}  {norm_means[b]:10.6f}  "
+                      f"{norm_stds[b]:10.6f}  {norm_counts[b]:6d}")
+
+        # Plot
+        save_path = os.path.join(args.model_dir, "field_divergence.png")
+        plot_divergence(pos, means, stds, counts,
+                        norm_centers, norm_means, norm_stds, norm_counts,
+                        save_path)
+
+        # Save metrics
+        metrics = {
+            "div_mean": float(all_divs.mean()),
+            "div_std": float(all_divs.std()),
+            "div_median": float(np.median(all_divs)),
+            "div_min": float(all_divs.min()),
+            "div_max": float(all_divs.max()),
+            "frac_positive": float(n_positive / len(all_divs)),
+            "frac_negative": float(n_negative / len(all_divs)),
+            "n_traces": len(lengths),
+        }
+        metrics_path = os.path.join(args.model_dir, "field_divergence_metrics.json")
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"Saved metrics to {metrics_path}")
+
+        # Segment-level divergence display
+        if args.n_show > 0:
+            show_indices = list(range(min(args.n_show, len(divs))))
+            show_divergence_by_segment(divs, dataset, show_indices)
 
 
 if __name__ == "__main__":
