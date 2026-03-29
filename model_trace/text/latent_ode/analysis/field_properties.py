@@ -29,12 +29,17 @@ from torch.utils.data import DataLoader
 
 from ..latent_ode import LatentODE
 from ..train_latent_ode import (
-    Config,
-    build_dataset,
+    Config as BaseConfig,
+    build_dataset as base_build_dataset,
     collate_fn,
     EmbeddingNormalizer,
 )
+from ..train_latent_ode_avg import (
+    Config as AvgConfig,
+    build_dataset as avg_build_dataset,
+)
 from ..embed import SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
+from .recon_quality import _is_avg_config
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +431,12 @@ def main():
     with open(os.path.join(args.model_dir, "config.json")) as f:
         config_dict = json.load(f)
     d_embed = config_dict.pop("d_embed")
+    config_dict.pop("d_embed_raw", None)
+    is_avg = _is_avg_config(config_dict)
+    Config = AvgConfig if is_avg else BaseConfig
     config = Config(**config_dict)
+    if is_avg:
+        print(f"Detected EMA-avg checkpoint (ema_decay={config.ema_decay})")
 
     config.dataset_name = args.dataset_name
     config.dataset_split = args.dataset_split
@@ -434,7 +444,14 @@ def main():
     config.embed_batch_size = args.embed_batch_size
 
     # Embedder
-    if config.embed_type == "sentence-transformers":
+    if is_avg:
+        embedder = QwenEmbedder(
+            model_name=config.embed_model,
+            device=config.device,
+            batch_size=config.embed_batch_size,
+            instruction=config.embed_instruction,
+        )
+    elif config.embed_type == "sentence-transformers":
         embedder = SentenceTransformerEmbedder(
             model_name=config.embed_model,
             device=config.device,
@@ -455,25 +472,27 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
+    build_dataset = avg_build_dataset if is_avg else base_build_dataset
     dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     del embedder
     import torch
     torch.cuda.empty_cache()
 
-    # Load model + normalizer
+    # Load model
     print(f"Loading model from {args.model_dir}")
     skeleton = LatentODE(d_embed, config, key=jax.random.PRNGKey(0))
     model = eqx.tree_deserialise_leaves(
         os.path.join(args.model_dir, "model.eqx"), skeleton
     )
 
-    normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
-    normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
-    if normalizer is not None:
-        print("Loaded normalizer from", normalizer_path)
-        for i in range(len(dataset.embeddings)):
-            dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
+    if not is_avg:
+        normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
+        normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
+        if normalizer is not None:
+            print("Loaded normalizer from", normalizer_path)
+            for i in range(len(dataset.embeddings)):
+                dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
 
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,

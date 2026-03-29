@@ -23,23 +23,35 @@ from torch.utils.data import DataLoader
 
 from ..latent_ode import LatentODE
 from ..train_latent_ode import (
-    Config,
-    build_dataset,
+    Config as BaseConfig,
+    build_dataset as base_build_dataset,
     collate_fn,
     EmbeddingNormalizer,
 )
+from ..train_latent_ode_avg import (
+    Config as AvgConfig,
+    build_dataset as avg_build_dataset,
+)
 from ..embed import SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
+
+
+def _is_avg_config(config_dict: dict) -> bool:
+    """Detect whether a checkpoint was saved by train_latent_ode_avg."""
+    return "ema_decay" in config_dict
 
 
 # ---------------------------------------------------------------------------
 # Load model (shared with latent_ode_pca — could be factored out later)
 # ---------------------------------------------------------------------------
 
-def load_model(model_dir: str) -> tuple[LatentODE, Config, int, EmbeddingNormalizer | None]:
+def load_model(model_dir: str):
     with open(os.path.join(model_dir, "config.json")) as f:
         config_dict = json.load(f)
 
     d_embed = config_dict.pop("d_embed")
+    config_dict.pop("d_embed_raw", None)  # avg checkpoints store this extra field
+    is_avg = _is_avg_config(config_dict)
+    Config = AvgConfig if is_avg else BaseConfig
     config = Config(**config_dict)
 
     skeleton = LatentODE(d_embed, config, key=jax.random.PRNGKey(0))
@@ -47,12 +59,14 @@ def load_model(model_dir: str) -> tuple[LatentODE, Config, int, EmbeddingNormali
         os.path.join(model_dir, "model.eqx"), skeleton
     )
 
-    normalizer_path = os.path.join(model_dir, "normalizer.npz")
-    normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
-    if normalizer is not None:
-        print("Loaded normalizer from", normalizer_path)
+    normalizer = None
+    if not is_avg:
+        normalizer_path = os.path.join(model_dir, "normalizer.npz")
+        normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
+        if normalizer is not None:
+            print("Loaded normalizer from", normalizer_path)
 
-    return model, config, d_embed, normalizer
+    return model, config, d_embed, normalizer, is_avg
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +247,12 @@ def main():
     with open(os.path.join(args.model_dir, "config.json")) as f:
         config_dict = json.load(f)
     d_embed = config_dict.pop("d_embed")
+    config_dict.pop("d_embed_raw", None)
+    is_avg = _is_avg_config(config_dict)
+    Config = AvgConfig if is_avg else BaseConfig
     config = Config(**config_dict)
+    if is_avg:
+        print(f"Detected EMA-avg checkpoint (ema_decay={config.ema_decay})")
 
     # Override config from CLI args
     config.dataset_name = args.dataset_name
@@ -242,7 +261,14 @@ def main():
     config.embed_batch_size = args.embed_batch_size
 
     # Embedder — run on GPU first, then free before loading JAX model
-    if config.embed_type == "sentence-transformers":
+    if is_avg:
+        embedder = QwenEmbedder(
+            model_name=config.embed_model,
+            device=config.device,
+            batch_size=config.embed_batch_size,
+            instruction=config.embed_instruction,
+        )
+    elif config.embed_type == "sentence-transformers":
         embedder = SentenceTransformerEmbedder(
             model_name=config.embed_model,
             device=config.device,
@@ -264,6 +290,8 @@ def main():
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
     # Dataset — embed only what we need while embedder owns the GPU
+    # avg variant's build_dataset applies EMA internally
+    build_dataset = avg_build_dataset if is_avg else base_build_dataset
     dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     # Free embedder GPU memory before loading JAX model
@@ -278,13 +306,14 @@ def main():
         os.path.join(args.model_dir, "model.eqx"), skeleton
     )
 
-    normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
-    normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
-    if normalizer is not None:
-        print("Loaded normalizer from", normalizer_path)
-        print("Applying normalizer to embeddings...")
-        for i in range(len(dataset.embeddings)):
-            dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
+    if not is_avg:
+        normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
+        normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
+        if normalizer is not None:
+            print("Loaded normalizer from", normalizer_path)
+            print("Applying normalizer to embeddings...")
+            for i in range(len(dataset.embeddings)):
+                dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
 
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,

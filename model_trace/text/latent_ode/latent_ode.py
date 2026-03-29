@@ -27,6 +27,26 @@ class ODEFunc(eqx.Module):
         return self.mlp(z)
 
 
+# time-dependent vector field over latent space z
+class ODEFuncTD(eqx.Module):
+    """Defines dz/dt = f(z, t). MLP takes concatenated [t, z] as input."""
+    mlp: eqx.nn.MLP
+
+    def __init__(self, d_z: int, d_hidden: int, *, key: jax.Array):
+        self.mlp = eqx.nn.MLP(
+            in_size=d_z + 1,  # +1 for scalar time input
+            out_size=d_z,
+            width_size=d_hidden,
+            depth=3,
+            activation=jax.nn.tanh,
+            key=key,
+        )
+
+    def __call__(self, t: float, z: jax.Array, _args) -> jax.Array:
+        tz = jnp.concatenate([jnp.atleast_1d(t), z])
+        return self.mlp(tz)
+
+
 class GRUEncoder(eqx.Module):
     """Projects embeddings, runs a backwards GRU, outputs (mu, log_var) for z0."""
     proj: eqx.nn.Linear
@@ -124,6 +144,42 @@ class LatentODE(eqx.Module):
 
     def decode(self, zs: jax.Array) -> jax.Array:
         return jax.vmap(self.decoder)(zs)  # (T_max, d_embed)
+
+
+class LatentODETD(eqx.Module):
+    """Latent ODE with time-dependent vector field."""
+    encoder: GRUEncoder
+    ode_func: ODEFuncTD
+    decoder: Decoder
+
+    def __init__(self, d_embed: int, config, *, key: jax.Array):
+        k1, k2, k3 = jax.random.split(key, 3)
+        self.encoder = GRUEncoder(d_embed, config.d_proj, config.d_encoder, config.d_z, key=k1)
+        self.ode_func = ODEFuncTD(config.d_z, config.d_ode_hidden, key=k2)
+        self.decoder = Decoder(config.d_z, d_embed, depth=config.d_decoder_depth, key=k3)
+
+    def encode(
+        self, x: jax.Array, mask: jax.Array, key: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        mu, log_var = self.encoder(x, mask)
+        z0 = mu + jnp.exp(0.5 * log_var) * jax.random.normal(key, mu.shape)
+        return z0, mu, log_var
+
+    def solve(self, z0: jax.Array, ts: jax.Array) -> jax.Array:
+        solution = diffrax.diffeqsolve(
+            diffrax.ODETerm(self.ode_func),
+            diffrax.Tsit5(),
+            t0=ts[0],
+            t1=ts[-1],
+            dt0=ts[1] - ts[0],
+            y0=z0,
+            saveat=diffrax.SaveAt(ts=ts),
+            stepsize_controller=diffrax.PIDController(rtol=1e-3, atol=1e-5),
+        )
+        return solution.ys
+
+    def decode(self, zs: jax.Array) -> jax.Array:
+        return jax.vmap(self.decoder)(zs)
 
 
 # ---------------------------------------------------------------------------

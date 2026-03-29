@@ -1,17 +1,16 @@
 """
-Train latent ODE with EMA-state trajectory points.
+Train latent ODE with time-dependent vector field.
 
-Each trajectory point is [ema_t ; e_t] where:
-  - e_t is the independent Qwen embedding of segment t
-  - ema_t = alpha * ema_{t-1} + (1 - alpha) * e_t  (exponential moving average)
-
-This gives the ODE a smoothly-evolving "state" signal alongside the current segment.
+Uses LatentODETD where dz/dt = f(z, t) — the MLP receives [t, z] as input.
+Timestamps are normalized to [0, 1] (via linspace) so that t=0.5 always means
+"halfway through the trace" regardless of trace length.
 
 Usage:
-CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode_avg \\
+CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode_td \\
     --dataset_name Ujan/deepmath_trace_3
-CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode_avg \\
-    --dataset_name Ujan/deepmath_trace_3 --ema_decay 0.9 --filter_topic Algebra
+CUDA_VISIBLE_DEVICES=0 python -m model_trace.text.latent_ode.train_latent_ode_td \\
+    --dataset_name Ujan/deepmath_trace_3 --filter_topic Algebra \\
+    --beta 0.1 --max_steps 500 --save_steps 100
 """
 
 from dataclasses import dataclass, field
@@ -30,7 +29,7 @@ from datasets import load_dataset
 from transformers import HfArgumentParser
 
 from .embed import QwenEmbedder
-from .latent_ode import LatentODE, elbo_batch
+from .latent_ode import LatentODETD, elbo_batch
 
 
 # ---------------------------------------------------------------------------
@@ -51,9 +50,6 @@ class Config:
     embed_batch_size: int = field(default=256)
     segment_by: str = field(default="\n\n")
 
-    # EMA state
-    ema_decay: float = field(default=0.9)  # alpha in ema_t = alpha * ema_{t-1} + (1 - alpha) * e_t
-
     # model
     d_proj: int = field(default=128)
     d_encoder: int = field(default=128)
@@ -61,7 +57,7 @@ class Config:
     d_ode_hidden: int = field(default=128)
     d_decoder_depth: int = field(default=3)
     beta: float = field(default=1.0)
-    output_dir: str = field(default="models/latent_ode_avg")
+    output_dir: str = field(default="models/latent_ode_td")
 
     # training
     seed: int = field(default=42)
@@ -80,32 +76,8 @@ class Config:
     # eval
     eval_sampled: bool = field(default=False)
 
-
-# ---------------------------------------------------------------------------
-# EMA state construction
-# ---------------------------------------------------------------------------
-
-def build_ema_trajectories(
-    embeddings: list[np.ndarray], alpha: float
-) -> list[np.ndarray]:
-    """Convert independent segment embeddings into [ema_t ; e_t] trajectory points.
-
-    For each trace with embeddings (T, D), produces (T, 2D) where:
-      - first D dims  = EMA state: ema_t = alpha * ema_{t-1} + (1 - alpha) * e_t
-      - last  D dims  = raw segment embedding e_t
-
-    ema_0 = e_0 (initialise to first segment).
-    """
-    result = []
-    for emb in embeddings:  # emb: (T, D)
-        T, D = emb.shape
-        ema = np.zeros((T, D), dtype=emb.dtype)
-        ema[0] = emb[0]
-        for t in range(1, T):
-            ema[t] = alpha * ema[t - 1] + (1.0 - alpha) * emb[t]
-        combined = np.concatenate([ema, emb], axis=1)  # (T, 2D)
-        result.append(combined)
-    return result
+    # marker for analysis scripts to detect this variant
+    time_dependent: bool = field(default=True)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +89,7 @@ def split_trace(trace: str, segment_by: str) -> list[str]:
 
 
 class TraceDataset(Dataset):
-    """Each item is a (T_i, 2D) float32 tensor — one EMA-augmented trajectory."""
+    """Each item is a (T_i, D) float32 tensor — one trajectory per trace."""
 
     def __init__(self, embeddings: list[np.ndarray], segments: list[list[str]] | None = None):
         self.embeddings = embeddings
@@ -131,6 +103,7 @@ class TraceDataset(Dataset):
 
 
 def collate_fn(batch: list[torch.Tensor]):
+    """Pad variable-length trajectories. Timestamps normalized to [0, 1]."""
     lengths = torch.tensor([t.shape[0] for t in batch])
     T_max = int(lengths.max().item())
     D = batch[0].shape[1]
@@ -142,7 +115,8 @@ def collate_fn(batch: list[torch.Tensor]):
         padded[i, :T] = traj
         mask[i, :T] = True
 
-    ts = torch.arange(T_max, dtype=torch.float32)
+    # Normalized timestamps: [0, 1] so t=0.5 means "halfway" for any trace length
+    ts = torch.linspace(0.0, 1.0, T_max)
     return padded, mask, lengths, ts
 
 
@@ -185,14 +159,12 @@ def build_dataset(config: Config, embedder: QwenEmbedder, max_traces: int | None
     flat_embeddings = embedder.embed(flat_segments)  # (total_segments, D)
 
     split_indices = np.cumsum(lengths)[:-1]
-    per_trace = np.split(flat_embeddings, split_indices)  # list of (T_i, D)
-    per_trace = [arr.astype(np.float32) for arr in per_trace]
+    per_trace = np.split(flat_embeddings, split_indices)
 
-    # Build EMA-augmented trajectories: (T_i, D) -> (T_i, 2D)
-    print(f"Building EMA trajectories (alpha={config.ema_decay})...")
-    ema_traces = build_ema_trajectories(per_trace, config.ema_decay)
-
-    return TraceDataset(ema_traces, segments=all_segments_lists)
+    return TraceDataset(
+        [arr.astype(np.float32) for arr in per_trace],
+        segments=all_segments_lists,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +192,7 @@ def make_train_step(optimizer: optax.GradientTransformation, beta: float):
 # ---------------------------------------------------------------------------
 
 @eqx.filter_jit
-def eval_batch(model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array) -> jax.Array:
+def eval_batch(model: LatentODETD, padded: jax.Array, mask: jax.Array, ts: jax.Array) -> jax.Array:
     def single(x, m):
         mu, _ = model.encoder(x, m)
         zs = model.solve(mu, ts)
@@ -230,7 +202,7 @@ def eval_batch(model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Arr
     return jnp.mean(jax.vmap(single)(padded, mask))
 
 
-def evaluate(model: LatentODE, loader: DataLoader) -> float:
+def evaluate(model: LatentODETD, loader: DataLoader) -> float:
     total_mse, n_batches = 0.0, 0
     for padded, mask, _, ts in loader:
         mse = eval_batch(
@@ -246,7 +218,7 @@ def evaluate(model: LatentODE, loader: DataLoader) -> float:
 
 @eqx.filter_jit
 def eval_batch_sampled(
-    model: LatentODE, padded: jax.Array, mask: jax.Array, ts: jax.Array, keys: jax.Array
+    model: LatentODETD, padded: jax.Array, mask: jax.Array, ts: jax.Array, keys: jax.Array
 ) -> jax.Array:
     def single(x, m, key):
         z0, _, _ = model.encode(x, m, key)
@@ -257,7 +229,7 @@ def eval_batch_sampled(
     return jnp.mean(jax.vmap(single)(padded, mask, keys))
 
 
-def evaluate_sampled(model: LatentODE, loader: DataLoader, rng_key: jax.Array) -> float:
+def evaluate_sampled(model: LatentODETD, loader: DataLoader, rng_key: jax.Array) -> float:
     total_mse, n_batches = 0.0, 0
     for padded, mask, _, ts in loader:
         rng_key, subkey = jax.random.split(rng_key)
@@ -284,8 +256,7 @@ def save_checkpoint(model, config, d_embed, step):
     os.makedirs(ckpt_dir, exist_ok=True)
     eqx.tree_serialise_leaves(os.path.join(ckpt_dir, "model.eqx"), model)
     config_dict = vars(config)
-    config_dict["d_embed"] = d_embed  # this is 2 * raw Qwen dim
-    config_dict["d_embed_raw"] = d_embed // 2
+    config_dict["d_embed"] = d_embed
     with open(os.path.join(ckpt_dir, "config.json"), "w") as f:
         json.dump(config_dict, f, indent=2)
     print(f"Checkpoint saved to {ckpt_dir}")
@@ -335,12 +306,12 @@ def main():
         collate_fn=collate_fn,
     )
 
-    # Model — d_embed is 2x raw Qwen dim (EMA + current)
-    d_embed = embedder.dim * 2
+    # Model
+    d_embed = embedder.dim
     key = jax.random.PRNGKey(config.seed)
     key, model_key = jax.random.split(key)
-    model = LatentODE(d_embed, config, key=model_key)
-    print(f"Model input dim: {d_embed} (= 2 × {embedder.dim})")
+    model = LatentODETD(d_embed, config, key=model_key)
+    print(f"Model: LatentODETD (time-dependent), d_embed={d_embed}")
 
     # Optimizer
     schedule = optax.warmup_cosine_decay_schedule(
