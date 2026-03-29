@@ -21,22 +21,39 @@ import equinox as eqx
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from ..latent_ode import LatentODE
+from ..latent_ode import LatentODE, LatentODETD
 from ..train_latent_ode import (
     Config as BaseConfig,
     build_dataset as base_build_dataset,
-    collate_fn,
+    collate_fn as base_collate_fn,
     EmbeddingNormalizer,
 )
 from ..train_latent_ode_avg import (
     Config as AvgConfig,
     build_dataset as avg_build_dataset,
 )
+from ..train_latent_ode_td import (
+    Config as TDConfig,
+    build_dataset as td_build_dataset,
+    collate_fn as td_collate_fn,
+)
 from ..embed import SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
 
 
+def _detect_variant(config_dict: dict) -> str:
+    """Detect which training variant produced a checkpoint.
+
+    Returns: "td", "avg", or "base".
+    """
+    if config_dict.get("time_dependent"):
+        return "td"
+    if "ema_decay" in config_dict:
+        return "avg"
+    return "base"
+
+
+# Keep for backwards compat with extrapolation.py / field_properties.py imports
 def _is_avg_config(config_dict: dict) -> bool:
-    """Detect whether a checkpoint was saved by train_latent_ode_avg."""
     return "ema_decay" in config_dict
 
 
@@ -50,23 +67,24 @@ def load_model(model_dir: str):
 
     d_embed = config_dict.pop("d_embed")
     config_dict.pop("d_embed_raw", None)  # avg checkpoints store this extra field
-    is_avg = _is_avg_config(config_dict)
-    Config = AvgConfig if is_avg else BaseConfig
+    variant = _detect_variant(config_dict)
+    Config = {"td": TDConfig, "avg": AvgConfig, "base": BaseConfig}[variant]
     config = Config(**config_dict)
 
-    skeleton = LatentODE(d_embed, config, key=jax.random.PRNGKey(0))
+    ModelClass = LatentODETD if variant == "td" else LatentODE
+    skeleton = ModelClass(d_embed, config, key=jax.random.PRNGKey(0))
     model = eqx.tree_deserialise_leaves(
         os.path.join(model_dir, "model.eqx"), skeleton
     )
 
     normalizer = None
-    if not is_avg:
+    if variant == "base":
         normalizer_path = os.path.join(model_dir, "normalizer.npz")
         normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
         if normalizer is not None:
             print("Loaded normalizer from", normalizer_path)
 
-    return model, config, d_embed, normalizer, is_avg
+    return model, config, d_embed, normalizer, variant
 
 
 # ---------------------------------------------------------------------------
@@ -248,11 +266,13 @@ def main():
         config_dict = json.load(f)
     d_embed = config_dict.pop("d_embed")
     config_dict.pop("d_embed_raw", None)
-    is_avg = _is_avg_config(config_dict)
-    Config = AvgConfig if is_avg else BaseConfig
+    variant = _detect_variant(config_dict)
+    Config = {"td": TDConfig, "avg": AvgConfig, "base": BaseConfig}[variant]
     config = Config(**config_dict)
-    if is_avg:
+    if variant == "avg":
         print(f"Detected EMA-avg checkpoint (ema_decay={config.ema_decay})")
+    elif variant == "td":
+        print("Detected time-dependent checkpoint")
 
     # Override config from CLI args
     config.dataset_name = args.dataset_name
@@ -261,7 +281,7 @@ def main():
     config.embed_batch_size = args.embed_batch_size
 
     # Embedder — run on GPU first, then free before loading JAX model
-    if is_avg:
+    if variant in ("avg", "td"):
         embedder = QwenEmbedder(
             model_name=config.embed_model,
             device=config.device,
@@ -289,9 +309,8 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    # Dataset — embed only what we need while embedder owns the GPU
-    # avg variant's build_dataset applies EMA internally
-    build_dataset = avg_build_dataset if is_avg else base_build_dataset
+    # Dataset — each variant's build_dataset handles its own preprocessing
+    build_dataset = {"td": td_build_dataset, "avg": avg_build_dataset, "base": base_build_dataset}[variant]
     dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     # Free embedder GPU memory before loading JAX model
@@ -299,14 +318,15 @@ def main():
     import torch
     torch.cuda.empty_cache()
 
-    # Now load JAX model + normalizer
+    # Now load JAX model
     print(f"Loading model from {args.model_dir}")
-    skeleton = LatentODE(d_embed, config, key=jax.random.PRNGKey(0))
+    ModelClass = LatentODETD if variant == "td" else LatentODE
+    skeleton = ModelClass(d_embed, config, key=jax.random.PRNGKey(0))
     model = eqx.tree_deserialise_leaves(
         os.path.join(args.model_dir, "model.eqx"), skeleton
     )
 
-    if not is_avg:
+    if variant == "base":
         normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
         normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
         if normalizer is not None:
@@ -315,6 +335,8 @@ def main():
             for i in range(len(dataset.embeddings)):
                 dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
 
+    # TD uses normalized timestamps [0,1]; base/avg use integer timestamps
+    collate_fn = td_collate_fn if variant == "td" else base_collate_fn
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,
     )

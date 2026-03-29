@@ -27,19 +27,24 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-from ..latent_ode import LatentODE
+from ..latent_ode import LatentODE, LatentODETD
 from ..train_latent_ode import (
     Config as BaseConfig,
     build_dataset as base_build_dataset,
-    collate_fn,
+    collate_fn as base_collate_fn,
     EmbeddingNormalizer,
 )
 from ..train_latent_ode_avg import (
     Config as AvgConfig,
     build_dataset as avg_build_dataset,
 )
+from ..train_latent_ode_td import (
+    Config as TDConfig,
+    build_dataset as td_build_dataset,
+    collate_fn as td_collate_fn,
+)
 from ..embed import SentenceTransformerEmbedder, SonarEmbedder, QwenEmbedder
-from .recon_quality import _is_avg_config
+from .recon_quality import _detect_variant
 
 
 # ---------------------------------------------------------------------------
@@ -432,11 +437,13 @@ def main():
         config_dict = json.load(f)
     d_embed = config_dict.pop("d_embed")
     config_dict.pop("d_embed_raw", None)
-    is_avg = _is_avg_config(config_dict)
-    Config = AvgConfig if is_avg else BaseConfig
+    variant = _detect_variant(config_dict)
+    Config = {"td": TDConfig, "avg": AvgConfig, "base": BaseConfig}[variant]
     config = Config(**config_dict)
-    if is_avg:
+    if variant == "avg":
         print(f"Detected EMA-avg checkpoint (ema_decay={config.ema_decay})")
+    elif variant == "td":
+        print("Detected time-dependent checkpoint")
 
     config.dataset_name = args.dataset_name
     config.dataset_split = args.dataset_split
@@ -444,7 +451,7 @@ def main():
     config.embed_batch_size = args.embed_batch_size
 
     # Embedder
-    if is_avg:
+    if variant in ("avg", "td"):
         embedder = QwenEmbedder(
             model_name=config.embed_model,
             device=config.device,
@@ -472,7 +479,7 @@ def main():
     else:
         raise NotImplementedError(f"Embedding type: {config.embed_type}")
 
-    build_dataset = avg_build_dataset if is_avg else base_build_dataset
+    build_dataset = {"td": td_build_dataset, "avg": avg_build_dataset, "base": base_build_dataset}[variant]
     dataset = build_dataset(config, embedder, max_traces=args.max_traces)
 
     del embedder
@@ -481,12 +488,13 @@ def main():
 
     # Load model
     print(f"Loading model from {args.model_dir}")
-    skeleton = LatentODE(d_embed, config, key=jax.random.PRNGKey(0))
+    ModelClass = LatentODETD if variant == "td" else LatentODE
+    skeleton = ModelClass(d_embed, config, key=jax.random.PRNGKey(0))
     model = eqx.tree_deserialise_leaves(
         os.path.join(args.model_dir, "model.eqx"), skeleton
     )
 
-    if not is_avg:
+    if variant == "base":
         normalizer_path = os.path.join(args.model_dir, "normalizer.npz")
         normalizer = EmbeddingNormalizer.load(normalizer_path) if os.path.exists(normalizer_path) else None
         if normalizer is not None:
@@ -494,6 +502,7 @@ def main():
             for i in range(len(dataset.embeddings)):
                 dataset.embeddings[i] = normalizer.normalize(dataset.embeddings[i]).astype(np.float32)
 
+    collate_fn = td_collate_fn if variant == "td" else base_collate_fn
     loader = DataLoader(
         dataset, batch_size=config.train_batch_size, shuffle=False, collate_fn=collate_fn,
     )
