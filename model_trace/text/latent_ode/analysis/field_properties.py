@@ -79,20 +79,23 @@ def extract_latent_trajectories(
     loader: DataLoader,
     sampled: bool = False,
     rng_key: jax.Array | None = None,
-) -> tuple[list[np.ndarray], list[int]]:
+) -> tuple[list[np.ndarray], list[np.ndarray], list[int]]:
     """Extract latent trajectories z(t) for all traces in the loader.
 
     Returns:
-        zs_all: list of (T_i, d_z) arrays
+        zs_all: list of (T_i, d_z) arrays — latent states
+        ts_all: list of (T_i,) arrays — timestamps for each trajectory
         lengths: list of ints
     """
     zs_all = []
+    ts_all = []
     lengths_all = []
 
     for padded, mask, lengths, ts in tqdm(loader, desc="Extracting trajectories"):
         padded_jax = jnp.array(padded.numpy())
         mask_jax = jnp.array(mask.numpy())
         ts_jax = jnp.array(ts.numpy())
+        ts_np = ts.numpy()
         lengths_np = lengths.numpy()
 
         for i in range(len(lengths_np)):
@@ -107,9 +110,10 @@ def extract_latent_trajectories(
                 zs = _extract_latent_trajectory_deterministic(model, x_i, m_i, ts_jax)
 
             zs_all.append(np.array(zs[:T]))
+            ts_all.append(ts_np[:T])
             lengths_all.append(T)
 
-    return zs_all, lengths_all
+    return zs_all, ts_all, lengths_all
 
 
 # ---------------------------------------------------------------------------
@@ -117,27 +121,30 @@ def extract_latent_trajectories(
 # ---------------------------------------------------------------------------
 
 def compute_speed(
-    model: LatentODE, zs_all: list[np.ndarray],
+    model: LatentODE,
+    zs_all: list[np.ndarray],
+    ts_all: list[np.ndarray],
 ) -> list[np.ndarray]:
-    """Compute ||f(z(t))|| at each timestep for each trajectory.
+    """Compute ||f(z(t), t)|| at each timestep for each trajectory.
+
+    For autonomous models (ODEFunc) t is ignored internally.
+    For time-dependent models (ODEFuncTD) the correct t is used.
 
     Returns:
         speeds: list of (T_i,) arrays
     """
-    # Unwrap the raw ODE function for evaluation outside diffrax
     ode_fn = model.ode_func
 
     @eqx.filter_jit
-    def _speed_single(z: jax.Array) -> jax.Array:
-        """Compute ||f(z)|| for a single latent state."""
-        fz = ode_fn(0.0, z, None)
+    def _speed_single(t: jax.Array, z: jax.Array) -> jax.Array:
+        fz = ode_fn(t, z, None)
         return jnp.linalg.norm(fz)
 
     _speed_batch = jax.jit(jax.vmap(_speed_single))
 
     speeds = []
-    for zs in tqdm(zs_all, desc="Computing speed"):
-        s = _speed_batch(jnp.array(zs))
+    for zs, ts in tqdm(zip(zs_all, ts_all), total=len(zs_all), desc="Computing speed"):
+        s = _speed_batch(jnp.array(ts), jnp.array(zs))
         speeds.append(np.array(s))
 
     return speeds
@@ -148,12 +155,18 @@ def compute_speed(
 # ---------------------------------------------------------------------------
 
 def compute_divergence(
-    model: LatentODE, zs_all: list[np.ndarray],
+    model: LatentODE,
+    zs_all: list[np.ndarray],
+    ts_all: list[np.ndarray],
 ) -> list[np.ndarray]:
-    """Compute div f(z) = tr(J) at each timestep for each trajectory.
+    """Compute div f(z, t) = tr(df/dz) at each timestep for each trajectory.
 
-    The Jacobian J = df/dz is a (d_z, d_z) matrix. For d_z=64 this is
+    The Jacobian J = df/dz is a (d_z, d_z) matrix — the derivative is
+    w.r.t. z only (t is treated as a parameter). For d_z=64 this is
     cheap to compute exactly via jax.jacrev.
+
+    For autonomous models (ODEFunc) t is ignored internally.
+    For time-dependent models (ODEFuncTD) the correct t is used.
 
     Returns:
         divs: list of (T_i,) arrays — divergence at each step
@@ -162,15 +175,15 @@ def compute_divergence(
     ode_fn = model.ode_func
 
     @eqx.filter_jit
-    def _div_single(z: jax.Array) -> jax.Array:
-        J = jax.jacrev(lambda z_: ode_fn(0.0, z_, None))(z)  # (d_z, d_z)
+    def _div_single(t: jax.Array, z: jax.Array) -> jax.Array:
+        J = jax.jacrev(lambda z_: ode_fn(t, z_, None))(z)  # (d_z, d_z)
         return jnp.trace(J)
 
     _div_batch = jax.jit(jax.vmap(_div_single))
 
     divs = []
-    for zs in tqdm(zs_all, desc="Computing divergence"):
-        d = _div_batch(jnp.array(zs))
+    for zs, ts in tqdm(zip(zs_all, ts_all), total=len(zs_all), desc="Computing divergence"):
+        d = _div_batch(jnp.array(ts), jnp.array(zs))
         divs.append(np.array(d))
 
     return divs
@@ -511,7 +524,7 @@ def main():
     mode = "sampled z0~q" if args.eval_sampled else "deterministic z0=mu"
     print(f"Extracting latent trajectories ({mode})...")
     rng_key = jax.random.PRNGKey(config.seed) if args.eval_sampled else None
-    zs_all, lengths = extract_latent_trajectories(
+    zs_all, ts_all, lengths = extract_latent_trajectories(
         model, loader, sampled=args.eval_sampled, rng_key=rng_key,
     )
     print(f"  {len(zs_all)} trajectories, d_z={zs_all[0].shape[1]}")
@@ -519,7 +532,7 @@ def main():
     # --- Speed ---
     if "speed" in args.properties:
         print("Computing speed ||f(z)||...")
-        speeds = compute_speed(model, zs_all)
+        speeds = compute_speed(model, zs_all, ts_all)
 
         # Summary
         all_speeds = np.concatenate(speeds)
@@ -577,7 +590,7 @@ def main():
     # --- Divergence ---
     if "divergence" in args.properties:
         print("Computing divergence tr(df/dz)...")
-        divs = compute_divergence(model, zs_all)
+        divs = compute_divergence(model, zs_all, ts_all)
 
         # Summary
         all_divs = np.concatenate(divs)

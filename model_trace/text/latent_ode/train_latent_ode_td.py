@@ -30,6 +30,7 @@ from transformers import HfArgumentParser
 
 from .embed import QwenEmbedder
 from .latent_ode import LatentODETD, elbo_batch
+from .train_latent_ode_avg import build_ema_trajectories
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,9 @@ class Config:
 
     # eval
     eval_sampled: bool = field(default=False)
+
+    # EMA state (0 = disabled, >0 = build [ema_t ; e_t] of dim 2D)
+    ema_decay: float = field(default=0.0)
 
     # marker for analysis scripts to detect this variant
     time_dependent: bool = field(default=True)
@@ -161,10 +165,13 @@ def build_dataset(config: Config, embedder: QwenEmbedder, max_traces: int | None
     split_indices = np.cumsum(lengths)[:-1]
     per_trace = np.split(flat_embeddings, split_indices)
 
-    return TraceDataset(
-        [arr.astype(np.float32) for arr in per_trace],
-        segments=all_segments_lists,
-    )
+    per_trace = [arr.astype(np.float32) for arr in per_trace]
+
+    if config.ema_decay > 0:
+        print(f"Building EMA trajectories (alpha={config.ema_decay})...")
+        per_trace = build_ema_trajectories(per_trace, config.ema_decay)
+
+    return TraceDataset(per_trace, segments=all_segments_lists)
 
 
 # ---------------------------------------------------------------------------
@@ -251,12 +258,13 @@ def evaluate_sampled(model: LatentODETD, loader: DataLoader, rng_key: jax.Array)
 # Checkpointing
 # ---------------------------------------------------------------------------
 
-def save_checkpoint(model, config, d_embed, step):
+def save_checkpoint(model, config, d_embed, d_embed_raw, step):
     ckpt_dir = os.path.join(config.output_dir, f"checkpoint-{step}")
     os.makedirs(ckpt_dir, exist_ok=True)
     eqx.tree_serialise_leaves(os.path.join(ckpt_dir, "model.eqx"), model)
     config_dict = vars(config)
     config_dict["d_embed"] = d_embed
+    config_dict["d_embed_raw"] = d_embed_raw
     with open(os.path.join(ckpt_dir, "config.json"), "w") as f:
         json.dump(config_dict, f, indent=2)
     print(f"Checkpoint saved to {ckpt_dir}")
@@ -274,6 +282,8 @@ def main():
     config.output_dir = config.output_dir + '/' + config.dataset_name.split("/")[-1]
     if config.filter_topic:
         config.output_dir = config.output_dir + '_' + config.filter_topic
+    if config.ema_decay > 0:
+        config.output_dir = config.output_dir + f'_ema{config.ema_decay}'
 
     embedder = QwenEmbedder(
         model_name=config.embed_model,
@@ -307,11 +317,13 @@ def main():
     )
 
     # Model
-    d_embed = embedder.dim
+    d_embed_raw = embedder.dim
+    d_embed = d_embed_raw * 2 if config.ema_decay > 0 else d_embed_raw
     key = jax.random.PRNGKey(config.seed)
     key, model_key = jax.random.split(key)
     model = LatentODETD(d_embed, config, key=model_key)
-    print(f"Model: LatentODETD (time-dependent), d_embed={d_embed}")
+    print(f"Model: LatentODETD (time-dependent), d_embed={d_embed}"
+          + (f" (= 2 × {d_embed_raw}, EMA)" if config.ema_decay > 0 else ""))
 
     # Optimizer
     schedule = optax.warmup_cosine_decay_schedule(
@@ -375,7 +387,7 @@ def main():
                 )
 
             if config.save_steps > 0 and global_step % config.save_steps == 0:
-                save_checkpoint(model, config, d_embed, global_step)
+                save_checkpoint(model, config, d_embed, d_embed_raw, global_step)
 
     # Evaluation
     print("Evaluating on test set...")
@@ -389,7 +401,7 @@ def main():
         print(f"Test MSE (deterministic, z0=mu): {test_mse:.6f}")
 
     writer.close()
-    save_checkpoint(model, config, d_embed, global_step)
+    save_checkpoint(model, config, d_embed, d_embed_raw, global_step)
 
 
 if __name__ == "__main__":
