@@ -1,5 +1,5 @@
 """
-Train latent ODE with time-dependent vector field.
+Train latent ODE with time-dependent vector field. :(
 
 Uses LatentODETD where dz/dt = f(z, t) — the MLP receives [t, z] as input.
 Timestamps are normalized to [0, 1] (via linspace) so that t=0.5 always means
